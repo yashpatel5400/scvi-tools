@@ -175,26 +175,26 @@ class UnsupervisedTrainer(Trainer):
                     self.grid_z
                 )
 
-            # penalty with fixed lambda0
-            penalty0 = self.lambda0 * (
-                int_z.abs().mean()
-                + int_s.abs().mean()
-                + int_zs_ds.abs().mean()
-                + int_zs_dz.abs().mean()
-            )
+                # penalty with fixed lambda0
+                penalty0 = self.lambda0 * (
+                    int_z.abs().mean()
+                    + int_s.abs().mean()
+                    + int_zs_ds.abs().mean()
+                    + int_zs_dz.abs().mean()
+                )
 
-            penalty_BDMM = (
-                (self.Lambda_z * int_z).mean()
-                + (self.Lambda_c * int_s).mean()
-                + (self.Lambda_cz_1 * int_zs_ds).mean()
-                + (self.Lambda_cz_2 * int_zs_dz).mean()
-            )
+                penalty_BDMM = (
+                    (self.Lambda_z * int_z).mean()
+                    + (self.Lambda_c * int_s).mean()
+                    + (self.Lambda_cz_1 * int_zs_ds).mean()
+                    + (self.Lambda_cz_2 * int_zs_dz).mean()
+                )
 
-            self.int_z = int_z
-            self.int_s = int_s
-            self.int_zs_ds = int_zs_ds
-            self.int_zs_dz = int_zs_dz
-            penalty = penalty_BDMM + penalty0
+                self.int_z = int_z
+                self.int_s = int_s
+                self.int_zs_ds = int_zs_ds
+                self.int_zs_dz = int_zs_dz
+                penalty = penalty_BDMM + penalty0
         else:
             penalty = 0
 
