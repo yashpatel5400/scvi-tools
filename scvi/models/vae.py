@@ -85,6 +85,7 @@ class VAE(nn.Module):
         use_sparsity_mask: bool = False,
         mask_prior: float = 0.1,
         mask_post_param_init: float = 0.0,
+        use_batch_norm_decoder: bool = False,
     ):
         super().__init__()
         self.n_input = n_input
@@ -136,7 +137,7 @@ class VAE(nn.Module):
                 n_layers=n_layers,
                 n_hidden=n_hidden,
                 two_param=False,
-                use_batch_norm=False,
+                use_batch_norm=use_batch_norm_decoder,
             )
             self.decoder_zs = Decoder(
                 n_latent,
@@ -145,7 +146,7 @@ class VAE(nn.Module):
                 n_hidden=n_hidden,
                 two_param=False,
                 n_cat_list=[n_batch],
-                use_batch_norm=False,
+                use_batch_norm=use_batch_norm_decoder,
             )
             self.decoder_s = Decoder(
                 1,
@@ -154,7 +155,7 @@ class VAE(nn.Module):
                 n_hidden=n_hidden,
                 two_param=False,
                 n_cat_list=[n_batch],
-                use_batch_norm=False,
+                use_batch_norm=use_batch_norm_decoder,
             )
             self.intercept = torch.nn.Parameter(-10 * torch.ones(1, n_input))
 
