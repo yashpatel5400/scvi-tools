@@ -195,6 +195,8 @@ class UnsupervisedTrainer(Trainer):
                 self.int_zs_ds = int_zs_ds
                 self.int_zs_dz = int_zs_dz
                 penalty = penalty_BDMM + penalty0
+            else:
+                penalty = 0
         else:
             penalty = 0
 
