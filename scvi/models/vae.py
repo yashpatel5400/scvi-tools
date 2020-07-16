@@ -86,6 +86,7 @@ class VAE(nn.Module):
         mask_prior: float = 0.1,
         mask_post_param_init: float = 0.0,
         use_batch_norm_decoder: bool = False,
+        intercept_init: float = -10.0,
     ):
         super().__init__()
         self.n_input = n_input
@@ -157,7 +158,7 @@ class VAE(nn.Module):
                 n_cat_list=[n_batch],
                 use_batch_norm=use_batch_norm_decoder,
             )
-            self.intercept = torch.nn.Parameter(-10 * torch.ones(1, n_input))
+            self.intercept = torch.nn.Parameter(intercept_init * torch.ones(1, n_input))
 
             if self.use_sparsity_mask:
 
