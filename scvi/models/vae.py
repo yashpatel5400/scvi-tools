@@ -472,7 +472,7 @@ class VAE(nn.Module):
         if self.neural_decomposition_decoder is True:
             self.f_z = self.decoder_z(z)
             self.f_s = self.decoder_s(
-                torch.zeros_like(dec_batch_index, dtype=torch.float32), dec_batch_index
+                torch.ones_like(dec_batch_index, dtype=torch.float32), dec_batch_index
             )
             self.f_zs = self.decoder_zs(z, dec_batch_index)
 
