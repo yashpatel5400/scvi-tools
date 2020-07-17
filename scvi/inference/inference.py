@@ -269,8 +269,8 @@ class UnsupervisedTrainer(Trainer):
                     self.Lambda_cz_1 += self.augmented_lagrangian_lr * self.int_zs_ds
                     self.Lambda_cz_2 += self.augmented_lagrangian_lr * self.int_zs_dz
 
-                    self.lambda0 += 0.1
-                    self.lambda0 = min(self.lambda0, 10000)
+                    self.lambda0 += 1.0
+                    self.lambda0 = min(self.lambda0, 50000)
 
                     self.model._set_temperature_for_mask(
                         self.temperature_schedule[self.epoch]
