@@ -277,13 +277,14 @@ class VAE(nn.Module):
         int_zs_ds = torch.zeros(z.shape[0], self.n_input, device=z.device)
         uniq_b_inds = torch.arange(self.n_batch)
         for s in uniq_b_inds:
-            dec_batch_index = torch.ones(z.shape[0], 1, device=z.device)
+            dec_batch_index = torch.ones(agg_z.shape[0], 1, device=z.device)
             int_zs_dz.append(
                 (mask_zs * self.decoder_zs(agg_z, dec_batch_index * s))
                 .mean(0)
                 .reshape(1, self.n_input)
             )
 
+            dec_batch_index = torch.ones(z.shape[0], 1, device=z.device)
             int_zs_ds += (
                 (1 / len(uniq_b_inds))
                 * mask_zs
