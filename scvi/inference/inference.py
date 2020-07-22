@@ -360,6 +360,19 @@ class UnsupervisedTrainer(Trainer):
                         self.temperature_schedule[self.epoch]
                     )
 
+    def training_extras_init(self, lr_d=1e-3, eps=0.01):
+        if self.discriminator is not None:
+            self.discriminator.train()
+
+            d_params = filter(
+                lambda p: p.requires_grad, self.discriminator.parameters()
+            )
+            self.d_optimizer = torch.optim.Adam(d_params, lr=lr_d, eps=eps)
+
+    def training_extras_end(self):
+        if self.discriminator is not None:
+            self.discriminator.eval()
+
 
 class AdapterTrainer(UnsupervisedTrainer):
     def __init__(self, model, gene_dataset, posterior_test, frequency=5):
