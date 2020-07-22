@@ -265,8 +265,10 @@ class VAE(nn.Module):
         else:
             mask_z, mask_zs, mask_s = 1.0, 1.0, 1.0
 
+        agg_z = self.z.clone().detach()
+
         # has shape [1, n_input]
-        int_z = (mask_z * self.decoder_z(z)).mean(dim=0).reshape(1, self.n_input)
+        int_z = (mask_z * self.decoder_z(agg_z)).mean(dim=0).reshape(1, self.n_input)
 
         # has shape [1, n_input]
         int_s = (mask_s * self.f_s).mean(dim=0).reshape(1, self.n_input)
@@ -277,7 +279,7 @@ class VAE(nn.Module):
         for s in uniq_b_inds:
             dec_batch_index = torch.ones(z.shape[0], 1, device=z.device)
             int_zs_dz.append(
-                (mask_zs * self.decoder_zs(z, dec_batch_index * s))
+                (mask_zs * self.decoder_zs(agg_z, dec_batch_index * s))
                 .mean(0)
                 .reshape(1, self.n_input)
             )
@@ -452,6 +454,7 @@ class VAE(nn.Module):
 
         # Sampling
         qz_m, qz_v, z = self.z_encoder(x_, y)
+        self.z = z
         ql_m, ql_v, library = self.l_encoder(x_)
 
         if n_samples > 1:
