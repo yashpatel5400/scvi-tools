@@ -107,6 +107,8 @@ class UnsupervisedTrainer(Trainer):
         self.augmented_lagrangian_lr = augmented_lagrangian_lr
         self.lambda0 = lambda0
         self.temperature_start_end = temperature_start_end
+        self.use_adversarial_loss = use_adversarial_loss
+        self.kappa = kappa
 
         # Set up number of warmup iterations
         self.n_iter_kl_warmup = n_iter_kl_warmup
