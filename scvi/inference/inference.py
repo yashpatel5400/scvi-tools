@@ -8,6 +8,7 @@ import anndata
 from numpy import ceil
 
 from scvi.inference import Trainer
+from scvi.models.utils import one_hot
 from scvi.dataset._constants import (
     _X_KEY,
     _BATCH_KEY,
@@ -15,6 +16,7 @@ from scvi.dataset._constants import (
     _LOCAL_L_VAR_KEY,
     _LABELS_KEY,
 )
+from scvi.models import Classifier
 
 plt.switch_backend("agg")
 logger = logging.getLogger(__name__)
@@ -90,6 +92,9 @@ class UnsupervisedTrainer(Trainer):
         lambda0: float = 1.0,
         n_grid_z: int = 50,
         temperature_start_end: list = [1.0, 0.2],
+        use_adversarial_loss: bool = False,
+        discriminator: Classifier = None,
+        kappa: float = None,
         **kwargs
     ):
         train_size = float(train_size)
@@ -142,6 +147,19 @@ class UnsupervisedTrainer(Trainer):
                     self.model.n_batch, dim, device=dev
                 )
                 self.grid_z = torch.randn((n_grid_z, self.model.n_latent), device=dev)
+
+        if use_adversarial_loss is True and discriminator is None:
+            discriminator = Classifier(
+                n_input=self.model.n_latent,
+                n_hidden=32,
+                n_labels=self.gene_dataset.uns["scvi_summary_stats"]["n_batch"],
+                n_layers=2,
+                logits=True,
+            )
+
+        self.discriminator = discriminator
+        if self.use_cuda and self.discriminator is not None:
+            self.discriminator.cuda()
 
     @property
     def posteriors_loop(self):
@@ -213,6 +231,70 @@ class UnsupervisedTrainer(Trainer):
         else:
             kl_weight = 1.0
         return kl_weight
+
+    def loss_discriminator(
+        self, z, batch_index, predict_true_class=True, return_details=True
+    ):
+
+        n_classes = self.gene_dataset.uns["scvi_summary_stats"]["n_batch"]
+        cls_logits = torch.nn.LogSoftmax(dim=1)(self.discriminator(z))
+
+        if predict_true_class:
+            cls_target = one_hot(batch_index, n_classes)
+        else:
+            one_hot_batch = one_hot(batch_index, n_classes)
+            cls_target = torch.zeros_like(one_hot_batch)
+            # place zeroes where true label is
+            cls_target.masked_scatter_(
+                ~one_hot_batch.bool(), torch.ones_like(one_hot_batch) / (n_classes - 1)
+            )
+
+        l_soft = cls_logits * cls_target
+        loss = -l_soft.sum(dim=1).mean()
+
+        return loss
+
+    def _get_z(self, tensors):
+        sample_batch = tensors[_X_KEY]
+
+        z = self.model.sample_from_posterior_z(sample_batch, give_mean=False)
+
+        return z
+
+    def on_training_loop(self, tensors_dict):
+        if self.use_adversarial_loss:
+            if self.kappa is None:
+                kappa = 1 - self.kl_weight
+            else:
+                kappa = self.kappa
+            batch_index = tensors_dict[0][_BATCH_KEY]
+            if kappa > 0:
+                z = self._get_z(*tensors_dict)
+                # Train discriminator
+                d_loss = self.loss_discriminator(z.detach(), batch_index, True)
+                d_loss *= kappa
+                self.d_optimizer.zero_grad()
+                d_loss.backward()
+                self.d_optimizer.step()
+
+                # Train generative model to fool discriminator
+                fool_loss = self.loss_discriminator(z, batch_index, False)
+                fool_loss *= kappa
+
+            # Train generative model
+            self.optimizer.zero_grad()
+            self.current_loss = loss = self.loss(*tensors_dict)
+            if kappa > 0:
+                (loss + fool_loss).backward()
+            else:
+                loss.backward()
+            self.optimizer.step()
+
+        else:
+            self.current_loss = loss = self.loss(*tensors_dict)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
     def on_training_begin(self):
         epoch_criterion = self.n_epochs_kl_warmup is not None
