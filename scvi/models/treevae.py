@@ -77,15 +77,20 @@ class TreeVAE(VAE):
 
         # Cluster tree into clades: After a certain depth (here =3), all children nodes are assumed iid and grouped into
         # "clades", for the training we sample one instance of each clade.
-        collapsed_tree = Tree(tree.write(is_leaf_fn=lambda x: cut_tree(x, 3)))
-        for l in collapsed_tree.get_leaves():
+        #collapsed_tree = Tree(tree.write(is_leaf_fn=lambda x: cut_tree(x, 3)))
+        #for l in collapsed_tree.get_leaves():
+            #l.cells = tree.search_nodes(name=l.name)[0].get_leaf_names()
+
+        for l in tree.get_leaves():
             l.cells = tree.search_nodes(name=l.name)[0].get_leaf_names()
 
-        self.root = collapsed_tree.name
+        #self.root = collapsed_tree.name
+        self.root = tree.name
 
         # add prior node
         inf_tree = Tree("prior_root;")
-        inf_tree.add_child(collapsed_tree)
+        #inf_tree.add_child(collapsed_tree)
+        inf_tree.add_child(tree)
 
         self.prior_root = inf_tree.name
 
