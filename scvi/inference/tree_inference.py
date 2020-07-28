@@ -13,6 +13,7 @@ import copy
 import matplotlib.pyplot as plt
 
 from sklearn.model_selection._split import _validate_shuffle_split
+from sklearn.model_selection import train_test_split
 from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data import DataLoader
 
@@ -26,7 +27,7 @@ from scvi.models.treevae import TreeVAE
 logger = logging.getLogger(__name__)
 
 plt.switch_backend("agg")
-
+import pdb
 
 class SequentialCladeSampler(SubsetRandomSampler):
     """ A sampler that is used to feed observations to the VAE for model fitting.
@@ -49,6 +50,10 @@ class SequentialCladeSampler(SubsetRandomSampler):
         # randomly draw a cell from each clade (i.e. bunch of leaves)
         return iter([np.random.choice(l) for l in self.clades if len(l) > 0])
 
+class SequentialSubsetSampler(SubsetRandomSampler):
+    def __iter__(self):
+        return iter(self.indices)
+    
 
 class TreePosterior(Posterior):
     """The functional data unit for treeVAE.
@@ -171,7 +176,7 @@ class TreeTrainer(Trainer):
     ):
         super().__init__(model, gene_dataset, **kwargs)
         self.n_epochs_kl_warmup = n_epochs_kl_warmup
-
+        self.simul = True
         self.train_set, self.test_set, self.validation_set = self.train_test_validation(
             model, gene_dataset, train_size, test_size
         )
@@ -236,7 +241,7 @@ class TreeTrainer(Trainer):
         each cluster into train/test/validation.
 
         The procedure of actually clustering the tree into clades that contain several
-        iid observations is done in the constructor functin for TreeVAE (scvi.models.treevae).
+        iid observations is done in the constructor function for TreeVAE (scvi.models.treevae).
         This procedure below will simply split the clades previously identified into
         train/test/validation sets according to the train_size specified.
 
@@ -261,28 +266,42 @@ class TreeTrainer(Trainer):
             else gene_dataset
         )
 
-        # this is where we need to shuffle within the tree structure
-        train_indices, test_indices, validate_indices = [], [], []
         barcodes = gene_dataset.barcodes
 
-        # for each clade induced by an internal node at a given depth split into
-        # train, test, and validation and append these indices to the master list
-        for l in model.tree.get_leaves():
-            c = l.cells
-            indices = get_indices_in_dataset(c, list(range(len(c))), barcodes)
-            l.indices = np.array(indices)
+        # No clades subsampling for small simulations
+        if self.simul:
+            train_indices, test_indices = train_test_split(range(len(barcodes)),
+                                                              test_size=0.2,
+                                                              random_state=42
+                                                              )
+            test_indices, validate_indices = train_test_split(test_indices,
+                                                              test_size=0.5,
+                                                              random_state=42
+                                                              )
+        else:
+            # this is where we need to shuffle within the tree structure
+            train_indices, test_indices, validate_indices = [], [], []
 
-        # randomly split leaves into test, train, and validation sets
-        for l in model.tree.get_leaves():
-            leaf_bunch = l.indices
-            n_train, n_test = _validate_shuffle_split(
-                len(leaf_bunch), test_size, train_size
-            )
-            random_state = np.random.RandomState(seed=self.seed)
-            permutation = random_state.permutation(leaf_bunch)
-            test_indices.append(list(permutation[:n_test]))
-            train_indices.append(list(permutation[n_test: (n_test + n_train)]))
-            validate_indices.append(list(permutation[(n_test + n_train):]))
+            # for each clade induced by an internal node at a given depth split into
+            # train, test, and validation and append these indices to the master list
+            for l in model.tree.get_leaves():
+                cc = l.cells
+                indices = get_indices_in_dataset(cc, list(range(len(cc))), barcodes)
+                l.indices = np.array(indices)
+
+            # randomly split leaves into test, train, and validation sets
+            for l in model.tree.get_leaves():
+                leaf_bunch = l.indices
+
+                n_train, n_test = _validate_shuffle_split(
+                    len(leaf_bunch), test_size, train_size
+                )
+
+                random_state = np.random.RandomState(seed=self.seed)
+                permutation = random_state.permutation(leaf_bunch)
+                test_indices.append(list(permutation[:n_test]))
+                train_indices.append(list(permutation[n_test: (n_test + n_train)]))
+                validate_indices.append(list(permutation[(n_test + n_train):]))
 
         # some print statement to ensure test/train/validation sets created correctly
         print("train_leaves: ", train_indices)
