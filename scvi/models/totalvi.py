@@ -324,7 +324,7 @@ class TOTALVI(nn.Module):
                 )
             else:
                 back_mean = self.background_pro_alpha.exp()
-                lib = y.sum(1)
+                lib = y.sum(1).unsqueeze(1)
                 reconst_loss_protein_full = -log_mixture_nb(
                     y,
                     lib * back_mean,
