@@ -519,7 +519,7 @@ class TOTALVI(nn.Module):
             else:
                 kl_div_back_pro = kl_div_back_pro_full.sum(dim=1)
         else:
-            kl_div_back_pro_full = 0
+            kl_div_back_pro = 0
 
         return (
             reconst_loss_gene,
