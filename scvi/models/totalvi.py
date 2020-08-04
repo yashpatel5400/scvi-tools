@@ -5,7 +5,7 @@ from typing import Dict, Optional, Tuple, Union, List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Normal, Bernoulli, kl_divergence as kl
+from torch.distributions import Normal, Bernoulli, Poisson, kl_divergence as kl
 
 from scvi.models.log_likelihood import (
     log_zinb_positive,
@@ -76,6 +76,8 @@ class TOTALVI(nn.Module):
         protein_dispersion: str = "protein",
         log_variational: bool = True,
         reconstruction_loss_gene: str = "nb",
+        reconstruction_loss_protein: str = "nb_mixture",
+        constant_protein_background: bool = False,
         latent_distribution: str = "ln",
         protein_batch_mask: List[np.ndarray] = None,
         encoder_batch: bool = True,
@@ -85,6 +87,8 @@ class TOTALVI(nn.Module):
         self.n_latent = n_latent
         self.log_variational = log_variational
         self.reconstruction_loss_gene = reconstruction_loss_gene
+        self.reconstruction_loss_protein = reconstruction_loss_protein
+        self.constant_protein_background = constant_protein_background
         self.n_batch = n_batch
         self.n_labels = n_labels
         self.n_input_genes = n_input_genes
@@ -313,9 +317,28 @@ class TOTALVI(nn.Module):
         else:
             reconst_loss_gene = -log_nb_positive(x, px_["rate"], px_["r"]).sum(dim=-1)
 
-        reconst_loss_protein_full = -log_mixture_nb(
-            y, py_["rate_back"], py_["rate_fore"], py_["r"], None, py_["mixing"]
-        )
+        if self.reconstruction_loss_protein == "nb_mixture":
+            if self.constant_protein_background is False:
+                reconst_loss_protein_full = -log_mixture_nb(
+                    y, py_["rate_back"], py_["rate_fore"], py_["r"], None, py_["mixing"]
+                )
+            else:
+                back_mean = self.background_pro_alpha.exp()
+                lib = y.sum(1)
+                reconst_loss_protein_full = -log_mixture_nb(
+                    y,
+                    lib * back_mean,
+                    lib * py_["fore_scale"] * back_mean,
+                    py_["r"],
+                    None,
+                    py_["mixing"],
+                )
+        elif self.reconstruction_loss_protein == "nb":
+            reconst_loss_protein_full = -log_nb_positive(
+                y, py_["back_alpha"].exp(), py_["r"]
+            )
+        else:
+            reconst_loss_protein_full = -Poisson(py_["back_alpha"].exp()).log_prob(y)
         if pro_batch_mask_minibatch is not None:
             temp_pro_loss_full = torch.zeros_like(reconst_loss_protein_full)
             temp_pro_loss_full.masked_scatter_(
@@ -482,15 +505,21 @@ class TOTALVI(nn.Module):
             Normal(local_l_mean_gene, torch.sqrt(local_l_var_gene)),
         ).sum(dim=1)
 
-        kl_div_back_pro_full = kl(
-            Normal(py_["back_alpha"], py_["back_beta"]), self.back_mean_prior
-        )
-        if pro_batch_mask_minibatch is not None:
-            kl_div_back_pro = (pro_batch_mask_minibatch * kl_div_back_pro_full).sum(
-                dim=1
+        if (
+            self.reconstruction_loss_protein == "nb_mixture"
+            and self.constant_protein_background is False
+        ):
+            kl_div_back_pro_full = kl(
+                Normal(py_["back_alpha"], py_["back_beta"]), self.back_mean_prior
             )
+            if pro_batch_mask_minibatch is not None:
+                kl_div_back_pro = (pro_batch_mask_minibatch * kl_div_back_pro_full).sum(
+                    dim=1
+                )
+            else:
+                kl_div_back_pro = kl_div_back_pro_full.sum(dim=1)
         else:
-            kl_div_back_pro = kl_div_back_pro_full.sum(dim=1)
+            kl_div_back_pro_full = 0
 
         return (
             reconst_loss_gene,
