@@ -520,7 +520,9 @@ class Posterior:
 
         sum_of_var = f_all_var.sum(dim=0, keepdim=True)
 
-        var_of_sum = torch.cat(f_z + f_s + f_int).var(dim=0, keepdim=True)
+        var_of_sum = (torch.cat(f_z) + torch.cat(f_s) + torch.cat(f_int)).var(
+            dim=0, keepdim=True
+        )
 
         return sum_of_var.cpu().numpy(), var_of_sum.cpu().numpy()
 
