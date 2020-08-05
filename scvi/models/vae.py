@@ -288,7 +288,7 @@ class VAE(nn.Module):
             int_zs_ds += (
                 (1 / len(uniq_b_inds))
                 * mask_zs
-                * self.decoder_zs(agg_z, dec_batch_index * s)
+                * self.decoder_zs(z, dec_batch_index * s)
             )
 
         # shape is num cat of s by n_input
