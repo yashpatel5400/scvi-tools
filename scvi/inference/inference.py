@@ -109,6 +109,7 @@ class UnsupervisedTrainer(Trainer):
         self.temperature_start_end = temperature_start_end
         self.use_adversarial_loss = use_adversarial_loss
         self.kappa = kappa
+        self.n_grid_z = n_grid_z
 
         # Set up number of warmup iterations
         self.n_iter_kl_warmup = n_iter_kl_warmup
@@ -191,6 +192,10 @@ class UnsupervisedTrainer(Trainer):
 
         if hasattr(self.model, "neural_decomposition_decoder"):
             if self.model.neural_decomposition_decoder is True:
+                dev = torch.device("cuda") if self.use_cuda is True else None
+                self.grid_z = torch.randn(
+                    (self.n_grid_z, self.model.n_latent), device=dev
+                )
                 (int_z, int_s, int_zs_ds, int_zs_dz) = self.model._calculate_integrals(
                     self.grid_z
                 )
