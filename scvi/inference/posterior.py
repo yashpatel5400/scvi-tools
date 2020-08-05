@@ -490,6 +490,41 @@ class Posterior:
         return f_all_var.t().cpu().numpy()
 
     @torch.no_grad()
+    def sum_of_variance(self, n_samples=1):
+
+        f_z, f_s, f_int = [], [], []
+
+        for tensors in self:
+
+            sample_batch, _, _, batch_index, labels = self._unpack_tensors(tensors)
+
+            self.model.inference(
+                sample_batch, batch_index=batch_index, y=labels, n_samples=n_samples
+            )
+
+            f_z.append(self.model.f_z * self.model.mask_z)
+
+            # f_s
+            f_s.append(self.model.f_s * self.model.mask_s)
+
+            # f_int
+            f_int.append(self.model.f_zs * self.model.mask_zs)
+
+        f_z_var = torch.cat(f_z).var(dim=0, keepdim=True)
+        f_s_var = torch.cat(f_s).var(dim=0, keepdim=True)
+        f_int_var = torch.cat(f_int).var(dim=0, keepdim=True)
+
+        # collect Var([f_z, f_c, f_int]) together
+        # and divide by total variance
+        f_all_var = torch.cat([f_z_var, f_s_var, f_int_var], dim=0)
+
+        sum_of_var = f_all_var.sum(dim=0, keepdim=True)
+
+        var_of_sum = torch.cat(f_z + f_s + f_int).var(dim=0, keepdim=True)
+
+        return sum_of_var.cpu().numpy(), var_of_sum.cpu().numpy()
+
+    @torch.no_grad()
     def differential_expression_stats(self, M_sampling: int = 100) -> Tuple:
         """Output average over statistics in a symmetric way (a against b), forget the sets if permutation is True
 
