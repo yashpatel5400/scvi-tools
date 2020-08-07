@@ -1,4 +1,5 @@
 import logging
+import random
 import sys
 import time
 
@@ -50,10 +51,6 @@ class SequentialCladeSampler(SubsetRandomSampler):
         # randomly draw a cell from each clade (i.e. bunch of leaves)
         return iter([np.random.choice(l) for l in self.clades if len(l) > 0])
 
-class SequentialSubsetSampler(SubsetRandomSampler):
-    def __iter__(self):
-        return iter(self.indices)
-    
 
 class TreePosterior(Posterior):
     """The functional data unit for treeVAE.
@@ -100,9 +97,11 @@ class TreePosterior(Posterior):
 
         self.clades = clades
         self.barcodes = gene_dataset.barcodes
-
+        self.use_cuda = False
         sampler = SequentialCladeSampler(self.clades)
+
         batch_size = len(self.clades)
+
         self.data_loader_kwargs.update({"sampler": sampler, "batch_size": batch_size})
 
         self.data_loader = DataLoader(gene_dataset, **self.data_loader_kwargs)
@@ -123,8 +122,11 @@ class TreePosterior(Posterior):
 
         elbo = 0
         print("computing elbo")
+        #pdb.set_trace()
+        self.use_cuda = False
         for i_batch, tensors in enumerate(self):
             sample_batch, local_l_mean, local_l_var, batch_index, labels = tensors[:5]
+            #pdb.set_trace()
             reconst_loss = vae(
                 sample_batch,
                 local_l_mean,
@@ -135,6 +137,7 @@ class TreePosterior(Posterior):
                 **kwargs
             )
             elbo += torch.sum(reconst_loss).item()
+            print(elbo)
         n_samples = len(self.indices)
         return elbo / n_samples
 
@@ -176,20 +179,20 @@ class TreeTrainer(Trainer):
     ):
         super().__init__(model, gene_dataset, **kwargs)
         self.n_epochs_kl_warmup = n_epochs_kl_warmup
-        self.simul = True
-        self.train_set, self.test_set, self.validation_set = self.train_test_validation(
+        self.clades = []
+        self.train_set, self.test_set = self.train_test_validation(
             model, gene_dataset, train_size, test_size
         )
         self.train_set.to_monitor = ["elbo"]
         self.test_set.to_monitor = ["elbo"]
-        self.validation_set.to_monitor = ["elbo"]
+        #self.validation_set.to_monitor = ["elbo"]
 
         self.barcodes = gene_dataset.barcodes
 
-        # initialize messages
-        # n_latent = self.model.n_latent
-        # null_latent = np.stack([np.array([0]*n_latent) for a in range(len(gene_dataset.barcodes))], axis=0)
-        # self.model.initialize_messages(null_latent, gene_dataset.barcodes, n_latent)
+        # initialize messages (??? needed)
+        #n_latent = self.model.n_latent
+        #null_latent = np.stack([np.array([0]*n_latent) for a in range(len(gene_dataset.barcodes))], axis=0)
+        #self.model.initialize_messages(null_latent, gene_dataset.barcodes, n_latent)
 
     @property
     def posteriors_loop(self):
@@ -227,7 +230,7 @@ class TreeTrainer(Trainer):
         self,
         model: TreeVAE = None,
         gene_dataset: TreeDataset = None,
-        train_size: float = 0.9,
+        train_size: float = 0.8,
         test_size: int = None,
         type_class=TreePosterior,
     ):
@@ -268,31 +271,30 @@ class TreeTrainer(Trainer):
 
         barcodes = gene_dataset.barcodes
 
-        # No clades subsampling for small simulations
-        if self.simul:
-            train_indices, test_indices = train_test_split(range(len(barcodes)),
-                                                              test_size=0.2,
-                                                              random_state=42
-                                                              )
-            test_indices, validate_indices = train_test_split(test_indices,
-                                                              test_size=0.5,
-                                                              random_state=42
-                                                              )
-        else:
-            # this is where we need to shuffle within the tree structure
-            train_indices, test_indices, validate_indices = [], [], []
+        # this is where we need to shuffle within the tree structure
+        train_indices, test_indices, validate_indices = [], [], []
 
-            # for each clade induced by an internal node at a given depth split into
-            # train, test, and validation and append these indices to the master list
-            for l in model.tree.get_leaves():
-                cc = l.cells
-                indices = get_indices_in_dataset(cc, list(range(len(cc))), barcodes)
-                l.indices = np.array(indices)
+        # for each clade induced by an internal node at a given depth split into
+        # train, test, and validation and append these indices to the master list
+        # introduce an index for each leaf in the tree
+        for l in model.tree.get_leaves():
+            c = l.cells
+            indices = get_indices_in_dataset(c, list(range(len(c))), barcodes)
+            l.indices = np.array(indices)
+            self.clades.append(indices)
 
-            # randomly split leaves into test, train, and validation sets
-            for l in model.tree.get_leaves():
-                leaf_bunch = l.indices
+        # randomly split leaves into test, train, and validation sets
+        for l in model.tree.get_leaves():
+            leaf_bunch = l.indices
 
+            if len(leaf_bunch) == 1:
+                x = random.random()
+                if x < train_size:
+                    train_indices.append([leaf_bunch[0]])
+                else:
+                    test_indices.append([leaf_bunch[0]])
+
+            else:
                 n_train, n_test = _validate_shuffle_split(
                     len(leaf_bunch), test_size, train_size
                 )
@@ -301,6 +303,7 @@ class TreeTrainer(Trainer):
                 permutation = random_state.permutation(leaf_bunch)
                 test_indices.append(list(permutation[:n_test]))
                 train_indices.append(list(permutation[n_test: (n_test + n_train)]))
+                # split test set in two
                 validate_indices.append(list(permutation[(n_test + n_train):]))
 
         # some print statement to ensure test/train/validation sets created correctly
@@ -314,9 +317,9 @@ class TreeTrainer(Trainer):
             self.create_posterior(
                 model, gene_dataset, test_indices, type_class=type_class
             ),
-            self.create_posterior(
-                model, gene_dataset, validate_indices, type_class=type_class
-            ),
+            #self.create_posterior(
+                #model, gene_dataset, validate_indices, type_class=type_class
+            #),
         )
 
     def create_posterior(
@@ -334,7 +337,7 @@ class TreeTrainer(Trainer):
 
         :param model: A ``TreeVAE` model.
         :param gene_dataset: A ``TreeDataset`` dataset that has both gene expression data and a tree.
-        :param clades: A list of clades that contain sets of leaves assumed to be iid.
+        :param clades: A list of clades that contain indices of sets of leaves assumed to be iid.
         :param use_cuda: Default=True.
         :param type_class: Which constructor to use (here, TreePosterior).
 
