@@ -9,7 +9,7 @@ from scvi.models.log_likelihood import log_zinb_positive, log_nb_positive
 from scvi.models.modules import Encoder, DecoderSCVI, LinearDecoderSCVI
 from scvi.models.utils import one_hot
 from scvi.models.vae import VAE
-
+import pdb
 import numpy as np
 
 torch.backends.cudnn.benchmark = True
@@ -56,6 +56,7 @@ class TreeVAE(VAE):
         log_variational: bool = True,
         reconstruction_loss: str = "zinb",
         tree: Tree = None,
+        use_clades: bool = None
     ):
 
         super().__init__(
@@ -68,32 +69,35 @@ class TreeVAE(VAE):
             dropout_rate,
             dispersion,
             log_variational,
-            reconstruction_loss,
+            reconstruction_loss
         )
 
         def cut_tree(node, distance):
 
             return node.distance == distance
 
-        # Cluster tree into clades: After a certain depth (here =3), all children nodes are assumed iid and grouped into
-        # "clades", for the training we sample one instance of each clade.
-        #collapsed_tree = Tree(tree.write(is_leaf_fn=lambda x: cut_tree(x, 3)))
-        #for l in collapsed_tree.get_leaves():
-            #l.cells = tree.search_nodes(name=l.name)[0].get_leaf_names()
+        self.use_clades = use_clades
+        if self.use_clades:
+            # Cluster tree into clades: After a certain depth (here = 3), all children nodes are assumed iid and grouped into
+            # "clades", for the training we sample one instance of each clade.
+            collapsed_tree = Tree(tree.write(is_leaf_fn=lambda x: cut_tree(x, 3)))
+            for l in collapsed_tree.get_leaves():
+                l.cells = tree.search_nodes(name=l.name)[0].get_leaf_names()
+            self.root = collapsed_tree.name
+            inf_tree = Tree("prior_root;")
+            inf_tree.add_child(collapsed_tree)
 
-        for l in tree.get_leaves():
-            l.cells = tree.search_nodes(name=l.name)[0].get_leaf_names()
 
-        #self.root = collapsed_tree.name
-        self.root = tree.name
-
-        # add prior node
-        inf_tree = Tree("prior_root;")
-        #inf_tree.add_child(collapsed_tree)
-        inf_tree.add_child(tree)
+        else:
+            # No collapsing for simulations (and small trees)
+            for l in tree.get_leaves():
+                l.cells = tree.search_nodes(name=l.name)[0].get_leaf_names()
+            self.root = tree.name
+            # add prior node
+            inf_tree = Tree("prior_root;")
+            inf_tree.add_child(tree)
 
         self.prior_root = inf_tree.name
-
         self.tree = inf_tree
 
     def initialize_messages(self, evidence, barcodes, d):
