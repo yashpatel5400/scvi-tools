@@ -1147,9 +1147,7 @@ class TotalTrainer(UnsupervisedTrainer):
             d_params = filter(
                 lambda p: p.requires_grad, self.discriminator.parameters()
             )
-            d_optimizer = torch.optim.Adam(
-                d_params, lr=lr_d, eps=eps, weight_decay=self.weight_decay
-            )
+            d_optimizer = torch.optim.Adam(d_params, lr=lr_d, eps=eps)
 
         if params is None:
             params = filter(lambda p: p.requires_grad, self.model.parameters())
