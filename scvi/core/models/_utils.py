@@ -74,7 +74,7 @@ def _de_core(
             all_info = {**all_info, **genes_properties_dict}
 
         res = pd.DataFrame(all_info, index=col_names)
-        sort_key = "proba_de" if mode == "change" else "bayes_factor"
+        sort_key = ["proba_de", "lfc_mean"] if mode == "change" else "bayes_factor"
         res = res.sort_values(by=sort_key, ascending=False)
         if mode == "change":
             res["is_de_fdr_{}".format(fdr)] = _fdr_de_prediction(
