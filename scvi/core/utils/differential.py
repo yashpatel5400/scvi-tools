@@ -593,7 +593,7 @@ def save_cluster_xlsx(
 
 
 @numba.njit(cache=True)
-def _aggregate_samples(change_distribution, frequency=3):
+def _aggregate_samples(change_distribution, frequency=5):
     """Aggregate change values over `frequency` number cells."""
     new_change = []
     for i in range(0, change_distribution.shape[0], frequency):

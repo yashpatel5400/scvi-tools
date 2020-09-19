@@ -626,6 +626,7 @@ class TOTALVI(RNASeqMixin, VAEMixin, BaseModelClass):
         sample_protein_mixing=False,
         include_protein_background=False,
         protein_prior_count=0.5,
+        rna_prior_count=1e-4,
     ):
         rna, protein = self.get_normalized_expression(
             adata=adata,
@@ -639,6 +640,7 @@ class TOTALVI(RNASeqMixin, VAEMixin, BaseModelClass):
             include_protein_background=include_protein_background,
         )
         protein += protein_prior_count
+        rna += rna_prior_count
 
         joint = np.concatenate([rna, protein], axis=1)
         return joint
@@ -662,6 +664,7 @@ class TOTALVI(RNASeqMixin, VAEMixin, BaseModelClass):
         batchid1: Optional[Iterable[str]] = None,
         batchid2: Optional[Iterable[str]] = None,
         fdr: float = 0.05,
+        rna_prior_count: float = 1e-4,
         protein_prior_count: float = 0.1,
         scale_protein: bool = False,
         sample_protein_mixing: bool = False,
@@ -676,6 +679,8 @@ class TOTALVI(RNASeqMixin, VAEMixin, BaseModelClass):
         Parameters
         ----------
         {doc_differential_expression}
+        rna_prior_count
+            Prior count added to RNA expression before LFC computation
         protein_prior_count
             Prior count added to protein expression before LFC computation
         scale_protein
@@ -699,6 +704,7 @@ class TOTALVI(RNASeqMixin, VAEMixin, BaseModelClass):
             sample_protein_mixing=sample_protein_mixing,
             include_protein_background=include_protein_background,
             protein_prior_count=protein_prior_count,
+            rna_prior_count=rna_prior_count,
             batch_size=batch_size,
         )
         col_names = np.concatenate(
