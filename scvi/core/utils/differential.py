@@ -277,9 +277,17 @@ class DifferentialComputation:
                     "change_fn should take exactly two parameters as inputs; m1_domain_fn one parameter."
                 )
             try:
-                s1 = _aggregate_samples(scales_1, frequency=aggregate_frequency)
-                s2 = _aggregate_samples(scales_2, frequency=aggregate_frequency)
-                change_distribution = change_fn(np.stack(s1), np.stack(s2))
+                if aggregate_frequency > 1:
+                    s1 = np.stack(
+                        _aggregate_samples(scales_1, frequency=aggregate_frequency)
+                    )
+                    s2 = np.stack(
+                        _aggregate_samples(scales_2, frequency=aggregate_frequency)
+                    )
+                else:
+                    s1 = scales_1
+                    s2 = scales_2
+                change_distribution = change_fn(s1, s2)
                 is_de = m1_domain_fn(change_distribution)
             except TypeError:
                 raise TypeError(
