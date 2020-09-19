@@ -8,6 +8,7 @@ from scvi._compat import Literal
 from typing import Union, List, Optional, Callable, Dict
 from scvi.data import get_from_registry
 from scvi._constants import _CONSTANTS
+import numba
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +275,10 @@ class DifferentialComputation:
                 )
             try:
                 change_distribution = change_fn(scales_1, scales_2)
+                change_distribution = _aggregate_change_distribution(
+                    change_distribution, frequency=3
+                )
+                change_distribution = np.stack(change_distribution)  # do outside numba
                 is_de = m1_domain_fn(change_distribution)
             except TypeError:
                 raise TypeError(
@@ -576,3 +581,14 @@ def save_cluster_xlsx(
     for i, x in enumerate(cluster_names):
         de_results[i].to_excel(writer, sheet_name=str(x))
     writer.close()
+
+
+@numba.njit(cache=True)
+def _aggregate_change_distribution(change_distribution, frequency=3):
+    """Aggregate change values over `frequency` number cells."""
+    new_change = []
+    for i in range(0, change_distribution.shape[0], frequency):
+        sliced = change_distribution[i : i + frequency]
+        new_change.append([np.median(sliced[:, f]) for f in range(sliced.shape[1])])
+
+    return new_change
