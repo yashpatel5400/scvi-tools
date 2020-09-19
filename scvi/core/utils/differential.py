@@ -48,6 +48,7 @@ class DifferentialComputation:
         m1_domain_fn: Optional[Callable] = None,
         delta: Optional[float] = 0.5,
         cred_interval_lvls: Optional[Union[List[float], np.ndarray]] = None,
+        aggregate_frequency: int = 5,
     ) -> Dict[str, np.ndarray]:
         r"""
         A unified method for differential expression inference.
@@ -153,6 +154,8 @@ class DifferentialComputation:
         cred_interval_lvls
             List of credible interval levels to compute for the posterior
             LFC distribution
+        aggregate_frequency
+            Frequency with which to aggregate samples of hidden expression.
 
         Returns
         -------
@@ -274,11 +277,9 @@ class DifferentialComputation:
                     "change_fn should take exactly two parameters as inputs; m1_domain_fn one parameter."
                 )
             try:
-                change_distribution = change_fn(scales_1, scales_2)
-                change_distribution = _aggregate_change_distribution(
-                    change_distribution, frequency=3
-                )
-                change_distribution = np.stack(change_distribution)  # do outside numba
+                s1 = _aggregate_samples(scales_1, frequency=aggregate_frequency)
+                s2 = _aggregate_samples(scales_2, frequency=aggregate_frequency)
+                change_distribution = change_fn(np.stack(s1), np.stack(s2))
                 is_de = m1_domain_fn(change_distribution)
             except TypeError:
                 raise TypeError(
@@ -584,7 +585,7 @@ def save_cluster_xlsx(
 
 
 @numba.njit(cache=True)
-def _aggregate_change_distribution(change_distribution, frequency=3):
+def _aggregate_samples(change_distribution, frequency=3):
     """Aggregate change values over `frequency` number cells."""
     new_change = []
     for i in range(0, change_distribution.shape[0], frequency):
