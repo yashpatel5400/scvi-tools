@@ -278,12 +278,11 @@ class DifferentialComputation:
                 )
             try:
                 if aggregate_frequency > 1:
-                    s1 = np.stack(
-                        _aggregate_samples(scales_1, frequency=aggregate_frequency)
+                    s1, s2 = _aggregate_samples(
+                        scales_1, scales_2, frequency=aggregate_frequency
                     )
-                    s2 = np.stack(
-                        _aggregate_samples(scales_2, frequency=aggregate_frequency)
-                    )
+                    s1 = np.stack(s1)
+                    s2 = np.stack(s2)
                 else:
                     s1 = scales_1
                     s2 = scales_2
@@ -593,11 +592,16 @@ def save_cluster_xlsx(
 
 
 @numba.njit(cache=True)
-def _aggregate_samples(change_distribution, frequency=5):
+def _aggregate_samples(s1, s2, frequency=5):
     """Aggregate change values over `frequency` number cells."""
-    new_change = []
-    for i in range(0, change_distribution.shape[0], frequency):
-        sliced = change_distribution[i : i + frequency]
-        new_change.append([np.median(sliced[:, f]) for f in range(sliced.shape[1])])
+    new_s1 = []
+    for i in range(0, s1.shape[0], frequency):
+        sliced = s1[i : i + frequency]
+        new_s1.append([np.median(sliced[:, f]) for f in range(sliced.shape[1])])
 
-    return new_change
+    new_s2 = []
+    for i in range(0, s2.shape[0], frequency):
+        sliced = s2[i : i + frequency]
+        new_s2.append([np.median(sliced[:, f]) for f in range(sliced.shape[1])])
+
+    return new_s1, new_s2
