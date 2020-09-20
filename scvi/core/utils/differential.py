@@ -49,6 +49,7 @@ class DifferentialComputation:
         delta: Optional[float] = 0.5,
         cred_interval_lvls: Optional[Union[List[float], np.ndarray]] = None,
         aggregate_frequency: int = 5,
+        aggregate_method: Literal["mean", "median"] = "median",
     ) -> Dict[str, np.ndarray]:
         r"""
         A unified method for differential expression inference.
@@ -156,16 +157,15 @@ class DifferentialComputation:
             LFC distribution
         aggregate_frequency
             Frequency with which to aggregate samples of hidden expression.
-
+        aggregate_method
+            Way to aggregate, either `'mean'` or `'median'`.
         Returns
         -------
         Differential expression properties
 
         """
-        # if not np.array_equal(self.indices, np.arange(len(self.dataset))):
-        #     logger.warning(
-        #         "Differential expression requires a Posterior object created with all indices."
-        #     )
+        if aggregate_method not in ["median", "mean"]:
+            raise ValueError("aggregate_method must be one of ['median', 'mean']")
 
         eps = 1e-8  # used for numerical stability
         # Normalized means sampling for both populations
@@ -278,8 +278,12 @@ class DifferentialComputation:
                 )
             try:
                 if aggregate_frequency > 1:
+                    am = 1 if aggregate_method == "median" else 0
                     s1, s2 = _aggregate_samples(
-                        scales_1, scales_2, frequency=aggregate_frequency
+                        scales_1,
+                        scales_2,
+                        frequency=aggregate_frequency,
+                        aggregate_method=am,
                     )
                     s1 = np.stack(s1)
                     s2 = np.stack(s2)
@@ -592,16 +596,26 @@ def save_cluster_xlsx(
 
 
 @numba.njit(cache=True)
-def _aggregate_samples(s1, s2, frequency=5):
+def _aggregate_samples(s1, s2, frequency=5, aggregate_method=1):
     """Aggregate change values over `frequency` number cells."""
+    am = aggregate_method
     new_s1 = []
     for i in range(0, s1.shape[0], frequency):
         sliced = s1[i : i + frequency]
-        new_s1.append([np.median(sliced[:, f]) for f in range(sliced.shape[1])])
+        new_s1.append([_agg_fn(sliced[:, f], am) for f in range(sliced.shape[1])])
 
     new_s2 = []
     for i in range(0, s2.shape[0], frequency):
         sliced = s2[i : i + frequency]
-        new_s2.append([np.median(sliced[:, f]) for f in range(sliced.shape[1])])
+        new_s2.append([_agg_fn(sliced[:, f], am) for f in range(sliced.shape[1])])
 
     return new_s1, new_s2
+
+
+@numba.njit(cache=True)
+def _agg_fn(data, am):
+
+    if am == 0:
+        return np.mean(data)
+    else:
+        return np.median(data)
