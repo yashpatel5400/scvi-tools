@@ -10,7 +10,9 @@ from scvi.models.modules import Encoder, DecoderSCVI, LinearDecoderSCVI
 from scvi.models.utils import one_hot
 from scvi.models.vae import VAE
 import pdb
+import time
 import numpy as np
+from numba import jit
 
 torch.backends.cudnn.benchmark = True
 
@@ -134,6 +136,7 @@ class TreeVAE(VAE):
         for node in self.tree.traverse():
             node.add_features(visited=False)
 
+    #@jit(parallel=True)
     def perform_message_passing(self, root_node, d, include_prior):
         # flag the node as visited
 
@@ -162,7 +165,7 @@ class TreeVAE(VAE):
         elif n == 1:
             # this happens when passing through the root
             k = incoming_messages[0]
-            root_node.nu = k.nu + root_node.get_distance(k)
+            root_node.nu = k.nu + 1.0  #root_node.get_distance(k)
             root_node.mu = k.mu
             root_node.log_z = 0
 
@@ -171,10 +174,12 @@ class TreeVAE(VAE):
             children_nu = [0] * n
             children_mu = [0] * n
 
+            # code profiling
+            t0 = time.time()
             for i in range(n):
                 k = incoming_messages[i]
                 # nu
-                children_nu[i] = k.nu + root_node.get_distance(k)
+                children_nu[i] = k.nu + 1.0  #root_node.get_distance(k)
                 root_node.nu += 1. / children_nu[i]
                 # mu
                 children_mu[i] = k.mu / children_nu[i]
@@ -182,7 +187,9 @@ class TreeVAE(VAE):
 
             root_node.nu = 1. / root_node.nu
             root_node.mu *= root_node.nu
+            #print("mu & nu took {} seconds".format(time.time() - t0))
 
+            #@jit(parallel=True)
             def product_without(L, exclude):
                 """
                 L: list of elements
@@ -198,6 +205,7 @@ class TreeVAE(VAE):
                         prod *= x
                 return prod
 
+
             # find t
             t = 0
             for excluded_idx in range(n):
@@ -210,6 +218,7 @@ class TreeVAE(VAE):
             Z_3 = 0
 
             # nested for loop --> need to optimize with numba jit
+            t0 = time.time()
             for j in range(n):
                 for h in range(n):
                     if h == j:
@@ -220,6 +229,7 @@ class TreeVAE(VAE):
                 l = incoming_messages[j]
                 Z_3 += prod_2 * torch.sum((k.mu - l.mu) ** 2).item()
             Z_3 *= -0.5 / t
+            #print("Computing Normalizing constants took {}".format(time.time() - t0))
 
             root_node.log_z = Z_1 + Z_2 + Z_3
 
@@ -244,16 +254,20 @@ class TreeVAE(VAE):
             ).item() / nu_inc - d * 0.5 * np.log(2 * np.pi * nu_inc)
         return res
 
-    def posterior_predictive_density(self, d):
+    ###### change this
+    def posterior_predictive_density(self, query_node):
+        """
+        :param query_node: (string) barcode of a query node
+        :return: the expectation and the variance for the posterioir (distribution query_node | observations)
+        """
 
         root_node = self.tree & self.root
 
         self.initialize_visit()
-        self.perform_message_passing(root_node, len(root_node.mu), True)
-        self.aggregate_messages_into_leaves_likelihood(delattr, add_prior=True)
-        for n in self.tree.traverse():
-
-            print("node: ", n, " expr_value: ", n.mu)
+        self.perform_message_passing((self.tree & query_node), len(root_node.mu), True)
+        return (self.tree & query_node).mu, (self.tree & query_node).nu
+        #for n in self.tree.traverse():
+            #print("node: ", n, " expr_value: ", n.mu)
 
     def forward(
         self, x, local_l_mean, local_l_var, batch_index=None, y=None, barcodes=None
