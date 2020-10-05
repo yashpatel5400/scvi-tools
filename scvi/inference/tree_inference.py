@@ -24,11 +24,11 @@ from scvi.dataset.tree import TreeDataset
 from scvi.inference import Trainer
 from scvi.inference.posterior import Posterior
 from scvi.models.treevae import TreeVAE
+from torch.distributions import Poisson, Gamma, Bernoulli, Normal
 
 logger = logging.getLogger(__name__)
 
 plt.switch_backend("agg")
-import pdb
 
 class SequentialCladeSampler(SubsetRandomSampler):
     """ A sampler that is used to feed observations to the VAE for model fitting.
@@ -126,7 +126,6 @@ class TreePosterior(Posterior):
         self.use_cuda = False
         for i_batch, tensors in enumerate(self):
             sample_batch, local_l_mean, local_l_var, batch_index, labels = tensors[:5]
-            #pdb.set_trace()
             reconst_loss = vae(
                 sample_batch,
                 local_l_mean,
@@ -140,6 +139,62 @@ class TreePosterior(Posterior):
             print(elbo)
         n_samples = len(self.indices)
         return elbo / n_samples
+
+    @torch.no_grad()
+    def generate(
+        self, n_samples: int = 100, batch_size: int = 64
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Sample from posterior predictive.
+        Parameters
+        ----------
+
+        n_samples
+            Number of posterior predictive samples
+        batch_size
+            mini batch size for loaded data. Lower for less memory usage
+
+        Returns
+        -------
+        x_new : :py:class:`torch.Tensor`
+            tensor with shape (n_cells, n_genes, n_samples)
+        x_old : :py:class:`torch.Tensor`
+            tensor with shape (n_cells, n_genes)
+        """
+
+        original_list = []
+        posterior_list = []
+        for tensors in self.update({"batch_size": batch_size}):
+            x, _, _, batch_index, labels, y = tensors
+            with torch.no_grad():
+                outputs = self.model.inference(
+                    x, y, batch_index=batch_index, label=labels, n_samples=n_samples
+                )
+            px_ = outputs["px_"]
+
+            rate = px_["rate"]
+            if len(px_["r"].size()) == 2:
+                dispersion = px_["r"]
+            else:
+                dispersion = torch.ones_like(x) * px_["r"]
+
+            # This gamma is really l*w using scVI manuscript notation
+            p = rate / (rate + dispersion)
+            r = dispersion
+            l_train = Gamma(r, (1 - p) / p).sample()
+            data = Poisson(l_train).sample().cpu().numpy()
+            # """
+            # In numpy (shape, scale) => (concentration, rate), with scale = p /(1 - p)
+            # rate = (1 - p) / p  # = 1/scale # used in pytorch
+            # """
+            original_list += [np.array(torch.cat((x, y), dim=-1).cpu())]
+            posterior_list += [data]
+
+            posterior_list[-1] = np.transpose(posterior_list[-1], (1, 2, 0))
+
+        return (
+            np.concatenate(posterior_list, axis=0),
+            np.concatenate(original_list, axis=0),
+        )
 
 
 class TreeTrainer(Trainer):
