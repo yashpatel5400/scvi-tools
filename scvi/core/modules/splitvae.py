@@ -245,7 +245,7 @@ class SplitEncoder(nn.Module):
         return q_mA, q_mB, q_vA, q_vB, latentA, latentB
 
 
-class SplitVAE(VAE):
+class SPLITVAE(VAE):
     r"""Variational auto-encoder model.
     Same as VAE but adds a split to partition the latent space
     Adds two new parameters: n_inputA, and n_latentA
@@ -291,7 +291,7 @@ class SplitVAE(VAE):
         n_hidden_split: int = 128,
     ):
 
-        super(SplitVAE, self).__init__(
+        super(SPLITVAE, self).__init__(
             n_input,
             n_batch,
             n_labels,
