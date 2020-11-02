@@ -2,7 +2,8 @@ import torch
 import numpy as np
 
 import torch.nn.functional as F
-from typing import Iterable, Dict, List, Literal
+from typing import Iterable, Dict, List
+from scvi._compat import Literal
 
 from torch import nn as nn
 from torch.distributions import Normal, kl_divergence as kl
