@@ -6,9 +6,9 @@ from typing import Iterable, Dict, List
 
 from torch import nn as nn
 from torch.distributions import Normal, kl_divergence as kl
-from scvi.models.modules import FCLayers
+from scvi.core.modules._base import FCLayers
 from scvi.core.modules.vae import VAE
-from scvi.models.utils import one_hot
+from scvi.core.modules.utils import one_hot
 from scvi import _CONSTANTS
 from scvi.core.modules._base._base_module import SCVILoss
 
