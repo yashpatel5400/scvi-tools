@@ -50,6 +50,7 @@ class SplitDecoder(nn.Module):
         n_layers_s: int = 1,
         n_hidden_x: int = 128,
         n_hidden_s: int = 128,
+        use_softmax: bool = True,
     ):
         super().__init__()
         self.px_decoder = FCLayers(
@@ -84,6 +85,7 @@ class SplitDecoder(nn.Module):
         self.ps_r_decoder = nn.Linear(n_hidden_s, n_output_s)
         # dropout
         self.ps_dropout_decoder = nn.Linear(n_hidden_s, n_output_s)
+        self.use_softmax = use_softmax
 
     def forward(
         self,
@@ -124,10 +126,10 @@ class SplitDecoder(nn.Module):
         """
         # The decoder returns values for the parameters of the ZINB distribution
         latent = torch.cat([z, u], dim=1)
+
         px = self.px_decoder(latent, *cat_list)
         px_scale = self.px_scale_decoder(px)
         px_dropout = self.px_dropout_decoder(px)
-
         # Clamp to high value: exp(12) ~ 160000 to avoid nans (computational stability)
         # px_rate = torch.exp(library) * px_scale  # torch.clamp( , max=12)
         px_r = self.px_r_decoder(px) if dispersion == "gene-cell" else None
@@ -136,9 +138,14 @@ class SplitDecoder(nn.Module):
         ps_scale = self.ps_scale_decoder(ps)
         ps_dropout = self.ps_dropout_decoder(ps)
 
+        if self.use_softmax:
+            px_scale = nn.Softmax(dim=-1)(px_scale)
+            ps_scale = nn.Softmax(dim=-1)(ps_scale)
+        else:
+            px_scale = torch.exp(px_scale)
+            ps_scale = torch.exp(ps_scale)
+
         scale = torch.cat([px_scale, ps_scale], dim=1)
-        sm = nn.Softmax(dim=-1)
-        scale = sm(scale)
         rate = torch.exp(library) * scale
 
         px_rate = rate[:, : px_scale.shape[1]]

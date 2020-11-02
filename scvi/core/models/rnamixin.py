@@ -165,6 +165,7 @@ class RNASeqMixin:
         batchid1: Optional[Iterable[str]] = None,
         batchid2: Optional[Iterable[str]] = None,
         fdr_target: float = 0.05,
+        col_names=None,
         **kwargs,
     ) -> pd.DataFrame:
         r"""
@@ -183,8 +184,8 @@ class RNASeqMixin:
         Differential expression DataFrame.
         """
         adata = self._validate_anndata(adata)
-
-        col_names = _get_var_names_from_setup_anndata(adata)
+        if col_names is None:
+            col_names = _get_var_names_from_setup_anndata(adata)
         model_fn = partial(
             self.get_normalized_expression,
             return_numpy=True,

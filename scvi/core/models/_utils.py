@@ -154,7 +154,6 @@ def _de_core(
         if all_stats is True:
             genes_properties_dict = all_stats_fn(adata, cell_idx1, cell_idx2)
             all_info = {**all_info, **genes_properties_dict}
-
         res = pd.DataFrame(all_info, index=col_names)
         sort_key = "proba_de" if mode == "change" else "bayes_factor"
         res = res.sort_values(by=sort_key, ascending=False)

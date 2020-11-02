@@ -1,9 +1,10 @@
 import logging
 
 from anndata import AnnData
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Union
 import torch
 import numpy as np
+import pandas as pd
 from torch.distributions import Normal
 
 from scvi._compat import Literal
@@ -13,6 +14,9 @@ from scvi.core.modules import SPLITVAE
 from scvi.core.trainers import UnsupervisedTrainer
 
 logger = logging.getLogger(__name__)
+
+
+Number = Union[int, float]
 
 
 class SPLITVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
@@ -48,6 +52,7 @@ class SPLITVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
             latent_distribution=latent_distribution,
             **model_kwargs,
         )
+        self.nuisance_genes_mask_ = nuisance_genes_mask
         self._model_summary_string = (
             "SPLITVAE Model with the following params: \n Non-Nuisance Latent Size: {},"
             "Nuisance Latent Size: {}, n_layers: {}, dropout_rate: "
@@ -140,3 +145,82 @@ class SPLITVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
         latent_z = np.array(torch.cat(latent_z))
         latent_u = np.array(torch.cat(latent_u))
         return latent_z, latent_u
+
+    @torch.no_grad()
+    def get_normalized_expression(
+        self,
+        adata: Optional[AnnData] = None,
+        indices: Optional[Sequence[int]] = None,
+        transform_batch: Optional[Sequence[Union[Number, str]]] = None,
+        non_nuisance_gene_list: Optional[Sequence[str]] = None,
+        library_size: Union[float, Literal["latent"]] = 1,
+        n_samples: int = 1,
+        batch_size: Optional[int] = None,
+        return_mean: bool = True,
+        return_numpy: Optional[bool] = None,
+    ) -> Union[np.ndarray, pd.DataFrame]:
+        r"""
+        Returns the normalized (decoded) gene expression.
+
+        This is denoted as :math:`\rho_n` in the scVI paper.
+
+        Parameters
+        ----------
+        adata
+            AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
+            AnnData object used to initialize the model.
+        indices
+            Indices of cells in adata to use. If `None`, all cells are used.
+        transform_batch
+            Batch to condition on.
+            If transform_batch is:
+
+            - None, then real observed batch is used.
+            - int, then batch transform_batch is used.
+        gene_list
+            Return frequencies of expression for a subset of genes.
+            This can save memory when working with large datasets and few genes are
+            of interest.
+        library_size
+            Scale the expression frequencies to a common library size.
+            This allows gene expression levels to be interpreted on a common scale of relevant
+            magnitude. If set to `"latent"`, use the latent libary size.
+        n_samples
+            Number of posterior samples to use for estimation.
+        batch_size
+            Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
+        return_mean
+            Whether to return the mean of the samples.
+        return_numpy
+            Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame includes
+            gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults to `False`.
+            Otherwise, it defaults to `True`.
+
+        Returns
+        -------
+        If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
+        Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+        """
+        adata = self._validate_anndata(adata)
+        if indices is None:
+            indices = np.arange(adata.n_obs)
+        exprs = super().get_normalized_expression(
+            adata=adata,
+            indices=indices,
+            transform_batch=transform_batch,
+            gene_list=non_nuisance_gene_list,
+            library_size=library_size,
+            n_samples=n_samples,
+            batch_size=batch_size,
+            return_mean=return_mean,
+            return_numpy=True,
+        )
+
+        if return_numpy is None or return_numpy is False:
+            return pd.DataFrame(
+                exprs,
+                columns=adata.var_names[self.nuisance_genes_mask_ == 0],
+                index=adata.obs_names[indices],
+            )
+        else:
+            return exprs
