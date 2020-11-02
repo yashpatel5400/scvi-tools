@@ -3,6 +3,7 @@ from .gimvi import GIMVI
 from .linear_scvi import LinearSCVI
 from .scanvi import SCANVI
 from .scvi import SCVI
+from .splitvi import SPLITVI
 from .totalvi import TOTALVI
 
-__all__ = ["SCVI", "TOTALVI", "LinearSCVI", "AUTOZI", "SCANVI", "GIMVI"]
+__all__ = ["SCVI", "TOTALVI", "LinearSCVI", "AUTOZI", "SCANVI", "GIMVI", "SPLITVI"]

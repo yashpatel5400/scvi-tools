@@ -2,7 +2,7 @@ import torch
 import numpy as np
 
 import torch.nn.functional as F
-from typing import Iterable, Dict, List
+from typing import Iterable, Dict, List, Literal
 
 from torch import nn as nn
 from torch.distributions import Normal, kl_divergence as kl
@@ -13,7 +13,7 @@ from scvi import _CONSTANTS
 from scvi.core.modules._base._base_module import SCVILoss
 
 
-class SplitDecoder(VAE):
+class SplitDecoder(nn.Module):
     """Decodes data from latent space of ``n_input`` dimensions ``n_output``
     dimensions using a fully-connected neural network of ``n_hidden`` layers.
 
@@ -287,8 +287,9 @@ class SPLITVAE(VAE):
         dropout_rate: float = 0.1,
         dispersion: str = "gene",
         log_variational: bool = True,
-        reconstruction_loss: str = "zinb",
         n_hidden_split: int = 128,
+        gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
+        latent_distribution: str = "normal",
     ):
 
         super(SPLITVAE, self).__init__(
@@ -301,7 +302,8 @@ class SPLITVAE(VAE):
             dropout_rate,
             dispersion,
             log_variational,
-            reconstruction_loss,
+            gene_likelihood,
+            latent_distribution,
         )
         self.nuisance_genes_idx = np.where(nuisance_genes_mask == 1)[0]
         self.non_nuisance_genes_idx = np.where(nuisance_genes_mask == 0)[0]
