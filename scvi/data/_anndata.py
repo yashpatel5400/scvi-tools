@@ -438,7 +438,7 @@ def transfer_anndata_setup(
     # transfer extra categorical covs
     has_cat_cov = True if _CONSTANTS.CAT_COVS_KEY in data_registry.keys() else False
     if has_cat_cov:
-        source_cat_dict = _scvi_dict["extra_categorical_mappings"].copy()
+        source_cat_dict = _scvi_dict["extra_categoricals"]["mappings"].copy()
         # extend categories
         if extend_categories:
             for key, mapping in source_cat_dict:
@@ -615,24 +615,36 @@ def _setup_extra_categorical_covs(
     cat_loc = "obsm"
     cat_key = "_scvi_extra_categoricals"
 
-    one_hots = []
+    adata.uns["_scvi"]["extra_categoricals"] = {}
 
     categories = {}
+    df = pd.DataFrame(index=adata.obs_names)
     for key in categorical_covariate_keys:
-        cat = adata.obs[key]
-        if category_dict is not None:
-            possible_cats = category_dict[key]
-            cat = cat.astype(CategoricalDtype(categories=possible_cats))
+        if category_dict is None:
+            categorical_obs = adata.obs[key].astype("category")
+            mapping = categorical_obs.cat.categories.to_numpy(copy=True)
+            categories[key] = mapping
         else:
-            categories[key] = cat.astype("category").cat.categories.to_numpy(copy=True)
+            possible_cats = category_dict[key]
+            categorical_obs = adata.obs[key].astype(
+                CategoricalDtype(categories=possible_cats)
+            )
+        codes = categorical_obs.cat.codes
+        df[key] = codes
 
-        one_hot_rep = pd.get_dummies(cat, prefix=key)
-        one_hots.append(one_hot_rep)
-
-    adata.obsm[cat_key] = pd.concat(one_hots, axis=1)
+    adata.obsm[cat_key] = df
 
     store_cats = categories if category_dict is None else category_dict
-    adata.uns["_scvi"]["extra_categorical_mappings"] = store_cats
+    adata.uns["_scvi"]["extra_categoricals"]["mappings"] = store_cats
+    # this preserves the order of the keys added to the df
+    adata.uns["_scvi"]["extra_categoricals"]["keys"] = categorical_covariate_keys
+
+    # how many cats per key, in the preserved order
+    n_cats_per_key = []
+    for k in categorical_covariate_keys:
+        n_cats_per_key.append(len(store_cats[k]))
+    adata.uns["_scvi"]["extra_categoricals"]["n_cats_per_key"] = n_cats_per_key
+
     return cat_loc, cat_key
 
 
@@ -849,6 +861,7 @@ def _setup_summary_stats(
         "n_vars": n_vars,
         "n_labels": n_labels,
         "n_proteins": n_proteins,
+        "n_continuous_covs": n_cont_covs,
     }
     adata.uns["_scvi"]["summary_stats"] = summary_stats
     logger.info(
@@ -940,7 +953,7 @@ def view_anndata_setup(source: Union[anndata.AnnData, dict, str]):
     n_cat = 0
     n_covs = 0
     if "extra_categorical_mappings" in setup_dict.keys():
-        n_cat = len(setup_dict["extra_categorical_mappings"])
+        n_cat = len(setup_dict["extra_categoricals"]["mappings"])
     if "extra_continuous_keys" in setup_dict.keys():
         n_covs = len(setup_dict["extra_continuous_keys"])
 
@@ -996,7 +1009,7 @@ def view_anndata_setup(source: Union[anndata.AnnData, dict, str]):
     t = _categorical_mappings_table("Batch Categories", "_scvi_batch", mappings)
     console.print(t)
 
-    if "extra_categorical_mappings" in setup_dict.keys():
+    if "extra_categoricals" in setup_dict.keys():
         t = _extra_categoricals_table(setup_dict)
         console.print(t)
 
@@ -1025,7 +1038,7 @@ def _extra_categoricals_table(setup_dict: dict):
         no_wrap=True,
         overflow="fold",
     )
-    for key, mappings in setup_dict["extra_categorical_mappings"].items():
+    for key, mappings in setup_dict["extra_categoricals"]["mappings"].items():
         for i, mapping in enumerate(mappings):
             if i == 0:
                 t.add_row("adata.obs['{}']".format(key), str(mapping), str(i))
