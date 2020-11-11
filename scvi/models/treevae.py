@@ -4,7 +4,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Normal, kl_divergence as kl
+from torch.distributions import Normal, LogNormal, kl_divergence as kl
 from scvi.models.log_likelihood import log_zinb_positive, log_nb_positive
 from scvi.models.modules import Encoder, DecoderSCVI, LinearDecoderSCVI
 from scvi.models.utils import one_hot
@@ -102,7 +102,18 @@ class TreeVAE(VAE):
         self.prior_root = inf_tree.name
         self.tree = inf_tree
 
+        # leaves barcodes
+        self.barcodes = [l.name for l in self.tree.get_leaves()]
+
+        #loss function
+        self.loss = {}
+        self.loss['Reconstruction'], self.loss['MP_lik'], self.loss['Gaussian pdf'] = [], [], []
+
     def initialize_messages(self, evidence, barcodes, d):
+
+        # at inference, torch tensors are detached
+        if type(evidence) == np.ndarray:
+            evidence = torch.from_numpy(evidence)
 
         dic_nu = {}
         dic_mu = {}
@@ -117,6 +128,7 @@ class TreeVAE(VAE):
         dic_mu[self.prior_root] = torch.from_numpy(np.zeros(d)).type(torch.DoubleTensor)
         dic_log_z[self.prior_root] = 0
 
+        ### ????????????? level-order
         for n in self.tree.traverse():
             if n.name in dic_nu:
                 n.add_features(
@@ -136,7 +148,6 @@ class TreeVAE(VAE):
         for node in self.tree.traverse():
             node.add_features(visited=False)
 
-    #@jit(parallel=True)
     def perform_message_passing(self, root_node, d, include_prior):
         # flag the node as visited
 
@@ -189,7 +200,6 @@ class TreeVAE(VAE):
             root_node.mu *= root_node.nu
             #print("mu & nu took {} seconds".format(time.time() - t0))
 
-            #@jit(parallel=True)
             def product_without(L, exclude):
                 """
                 L: list of elements
@@ -254,20 +264,84 @@ class TreeVAE(VAE):
             ).item() / nu_inc - d * 0.5 * np.log(2 * np.pi * nu_inc)
         return res
 
-    ###### change this
-    def posterior_predictive_density(self, query_node):
+
+    def posterior_predictive_density(self, query_node, evidence=None):
         """
         :param query_node: (string) barcode of a query node
-        :return: the expectation and the variance for the posterioir (distribution query_node | observations)
+               evidence: (ndarray) observation values at the leaves (used as an initialization)
+        :return: the expectation and the variance for the posterior (distribution query_node | observations)
         """
 
         root_node = self.tree & self.root
 
         self.initialize_visit()
+
+        if evidence is not None:
+            self.initialize_messages(evidence,
+                                     self.barcodes,
+                                     self.n_latent)
+
         self.perform_message_passing((self.tree & query_node), len(root_node.mu), True)
         return (self.tree & query_node).mu, (self.tree & query_node).nu
-        #for n in self.tree.traverse():
-            #print("node: ", n, " expr_value: ", n.mu)
+
+
+    def inference(
+        self, x, batch_index=None, y=None, n_samples=1
+    ):
+        """Helper function used in forward pass
+                """
+
+        # Sampling
+        qz_m, qz_v, z = self.z_encoder(x, y)
+
+        # we consider the library size fixed
+        ql_m, ql_v, library = self.l_encoder(x)
+
+        if n_samples > 1:
+            qz_m = qz_m.unsqueeze(0).expand((n_samples, qz_m.size(0), qz_m.size(1)))
+            qz_v = qz_v.unsqueeze(0).expand((n_samples, qz_v.size(0), qz_v.size(1)))
+            # when z is normal, untran_z == z
+            untran_z = Normal(qz_m, qz_v.sqrt()).sample()
+            z = self.z_encoder.z_transformation(untran_z)
+
+
+            #ql_m = ql_m.unsqueeze(0).expand((n_samples, ql_m.size(0), ql_m.size(1)))
+            #ql_v = ql_v.unsqueeze(0).expand((n_samples, ql_v.size(0), ql_v.size(1)))
+            #library = Normal(ql_m, ql_v.sqrt()).sample()
+
+        dec_batch_index = batch_index
+
+        # Library size fixed
+        library = torch.log(x.sum(dim=1,
+                        dtype=torch.float64
+                        )).view(-1, 1)
+
+        px_scale, px_r, px_rate, px_dropout = self.decoder(
+            self.dispersion, z, library, dec_batch_index, y
+        )
+        if self.dispersion == "gene-label":
+            px_r = F.linear(
+                one_hot(y, self.n_labels), self.px_r
+            )  # px_r gets transposed - last dimension is nb genes
+        elif self.dispersion == "gene-batch":
+            px_r = F.linear(one_hot(dec_batch_index, self.n_batch), self.px_r)
+        elif self.dispersion == "gene":
+            px_r = self.px_r
+        px_r = torch.exp(px_r)
+
+        return dict(
+            px_scale=px_scale,
+            px_r=px_r,
+            px_rate=px_rate,
+            px_dropout=px_dropout,
+            qz_m=qz_m,
+            qz_v=qz_v,
+            z=z,
+            ql_m=None,
+            ql_v=None,
+            library=library,
+        )
+
 
     def forward(
         self, x, local_l_mean, local_l_var, batch_index=None, y=None, barcodes=None
@@ -286,6 +360,7 @@ class TreeVAE(VAE):
 		"""
         # Parameters for z latent distribution
         outputs = self.inference(x, batch_index, y)
+
         qz_m = outputs["qz_m"]
         qz_v = outputs["qz_v"]
         ql_m = outputs["ql_m"]
@@ -294,20 +369,32 @@ class TreeVAE(VAE):
         px_r = outputs["px_r"]
         px_dropout = outputs["px_dropout"]
         z = outputs["z"]
+        library = outputs["library"]
 
         # message passing likelihood
         self.initialize_visit()
         self.initialize_messages(
-            z, [l.name for l in self.tree.get_leaves()], z.shape[1]
+            z,
+            self.barcodes,
+            self.n_latent
         )
+
         self.perform_message_passing((self.tree & self.root), z.shape[1], False)
         mp_lik = self.aggregate_messages_into_leaves_likelihood(
             z.shape[1], add_prior=True
         )
 
-        qz = Normal(qz_m, torch.sqrt(qz_v)).log_prob(outputs["z"]).sum(dim=-1)
+        qz = Normal(qz_m, torch.sqrt(qz_v)).log_prob(z).sum(dim=-1)
+
+        # library size likelihood
+        # pl = LogNormal(ql_m, torch.sqrt(ql_v)).log_prob(l).sum(dim=1)
+
+        self.loss['MP_lik'].append(mp_lik / z.shape[0])
+        self.loss['Reconstruction'].append(torch.mean(self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)).item())
+        self.loss['Gaussian pdf'].append(torch.mean(qz).item())
 
         reconst_loss = (
-            self.get_reconstruction_loss(x, px_rate, px_r, px_dropout) - qz + mp_lik
+            self.get_reconstruction_loss(x, px_rate, px_r, px_dropout) + qz
         )
-        return reconst_loss
+
+        return reconst_loss, mp_lik

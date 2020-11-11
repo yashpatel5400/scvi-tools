@@ -11,10 +11,13 @@ def precision_matrix(tree_name, d):
      after inversion and post processing of the constructed precision matrix
     """
     # load tree
-    with open(tree_name, "r") as myfile:
-        tree_string = myfile.readlines()
-
-    tree = Tree(tree_string[0], 1)
+    suffix = tree_name.split('.')[-1]
+    if suffix == "txt":
+        with open(tree_name, "r") as myfile:
+            tree_string = myfile.readlines()
+            tree = Tree(tree_string[0], 1)
+    else:
+        tree = Tree(tree_name, 1)
     leaves = tree.get_leaves()
 
     # introduce an index for all the nodes
@@ -37,12 +40,14 @@ def precision_matrix(tree_name, d):
 
     inverse_covariance = np.zeros((N * d, N * d))
 
+    # parameter to control the variance
+    t = 1
     for i in parents:
         pi_ind = parents[i]
-        inverse_covariance[i * d: (i + 1) * d, i * d: (i + 1) * d] += np.identity(d)
-        inverse_covariance[pi_ind * d: (pi_ind + 1) * d, pi_ind * d: (pi_ind + 1) * d] += np.identity(d)
-        inverse_covariance[pi_ind * d: (pi_ind + 1) * d, i * d: (i + 1) * d] += - np.identity(d)
-        inverse_covariance[i * d: (i + 1) * d, pi_ind * d: (pi_ind + 1) * d] += - np.identity(d)
+        inverse_covariance[i * d: (i + 1) * d, i * d: (i + 1) * d] += np.identity(d) * t
+        inverse_covariance[pi_ind * d: (pi_ind + 1) * d, pi_ind * d: (pi_ind + 1) * d] += np.identity(d) * t
+        inverse_covariance[pi_ind * d: (pi_ind + 1) * d, i * d: (i + 1) * d] += - np.identity(d) * t
+        inverse_covariance[i * d: (i + 1) * d, pi_ind * d: (pi_ind + 1) * d] += - np.identity(d) * t
 
     inverse_covariance[0:d, 0:d] += np.identity(d)
 

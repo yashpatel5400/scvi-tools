@@ -122,11 +122,10 @@ class TreePosterior(Posterior):
 
         elbo = 0
         print("computing elbo")
-        #pdb.set_trace()
         self.use_cuda = False
         for i_batch, tensors in enumerate(self):
             sample_batch, local_l_mean, local_l_var, batch_index, labels = tensors[:5]
-            reconst_loss = vae(
+            reconst_loss, mp_lik = vae(
                 sample_batch,
                 local_l_mean,
                 local_l_var,
@@ -136,14 +135,44 @@ class TreePosterior(Posterior):
                 **kwargs
             )
             elbo += torch.sum(reconst_loss).item()
-            print(elbo)
         n_samples = len(self.indices)
-        return elbo / n_samples
+        print("ELBO Loss: {}".format((elbo - mp_lik) / n_samples))
+        return (elbo - mp_lik) / n_samples
 
     @torch.no_grad()
-    def generate(
-        self, n_samples: int = 100, batch_size: int = 64
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def imputation_mean(
+        self,
+        n_samples,
+    ):
+        """Imputes px_rate over self cells
+
+        Parameters
+        ----------
+        n_samples
+            number of posterior samples
+
+        Returns
+        -------
+        type
+            (n_samples, n_cells, n_genes) px_rates squeezed array
+
+        """
+        imputed_arr = []
+        for tensors in self:
+            sample_batch, _, _, batch_index, labels = tensors
+            px_rate = self.model.inference(
+                sample_batch,
+                batch_index=batch_index,
+                y=labels,
+                n_samples=n_samples
+            )
+            imputed_arr.append(np.concatenate([np.array(px_rate.cpu())]))
+        imputed_arr = np.array(imputed_arr)
+        return imputed_arr.mean(0).squeeze()
+
+
+    @torch.no_grad()
+    def generate(self, n_samples: int = 100, batch_size: int = 64):
         """Sample from posterior predictive.
         Parameters
         ----------
@@ -164,18 +193,14 @@ class TreePosterior(Posterior):
         original_list = []
         posterior_list = []
         for tensors in self.update({"batch_size": batch_size}):
-            x, _, _, batch_index, labels, y = tensors
+            x, _, _, batch_index, labels = tensors
             with torch.no_grad():
                 outputs = self.model.inference(
-                    x, y, batch_index=batch_index, label=labels, n_samples=n_samples
+                    x,  batch_index=batch_index, y=labels, n_samples=n_samples
                 )
-            px_ = outputs["px_"]
 
-            rate = px_["rate"]
-            if len(px_["r"].size()) == 2:
-                dispersion = px_["r"]
-            else:
-                dispersion = torch.ones_like(x) * px_["r"]
+            rate = outputs["px_rate"]
+            dispersion = outputs["px_r"]
 
             # This gamma is really l*w using scVI manuscript notation
             p = rate / (rate + dispersion)
@@ -186,15 +211,70 @@ class TreePosterior(Posterior):
             # In numpy (shape, scale) => (concentration, rate), with scale = p /(1 - p)
             # rate = (1 - p) / p  # = 1/scale # used in pytorch
             # """
-            original_list += [np.array(torch.cat((x, y), dim=-1).cpu())]
+            original_list += [np.array(x.cpu().numpy())]
             posterior_list += [data]
 
             posterior_list[-1] = np.transpose(posterior_list[-1], (1, 2, 0))
 
-        return (
-            np.concatenate(posterior_list, axis=0),
-            np.concatenate(original_list, axis=0),
-        )
+        return (np.concatenate(posterior_list, axis=0),
+                np.concatenate(original_list, axis=0)
+                )
+
+    @torch.no_grad()
+    def imputation_internal(self, query_node):
+        """
+        :param self:
+        :param query_node: barcode of the query node node for which we want to perform missing value imputation
+        :return: the imputed gene expression value at the query node
+        """
+        # 1. sampling from posterior z ~ q(z|x) at the leaves
+        z = self.get_latent(give_mean=False)[0]
+
+        # 2. Message passing & sampling from multivariate normal z* ~ p(z*|z)
+        mu_star, nu_star = self.model.posterior_predictive_density(query_node=query_node,
+                                                            evidence=z)
+
+        z_star = Normal(mu_star, torch.sqrt(torch.from_numpy(np.array([nu_star])))).sample()
+
+        # 3. Decode latent vector x* ~ p(x*|z = z*)
+        self.model.eval()
+        px_scale, px_r, px_rate, px_dropout = self.model.decoder.forward(self.model.dispersion,
+                                                                    z_star.view(1, -1).float(),
+                                                                  torch.from_numpy(np.array([np.log(10000)])),
+                                                                  0)
+        if px_r:
+            dispersion = px_r
+        else:
+            dispersion = torch.exp(self.model.px_r)
+
+        p = px_rate / (px_rate + dispersion)
+        l_train = Gamma(dispersion, (1 - p) / p).sample()
+        data = Poisson(l_train).sample().cpu().numpy()
+
+        return data
+
+    @torch.no_grad()
+    def empirical_qz_v(self, n_samples, norm):
+        """
+        :param query_node: barcode of the query node node for which we want to perform missing value imputation
+        :return: empirical variance of the encoder
+        """
+
+        # Sample from posterior
+        latent = []
+        for n in range(n_samples):
+            latent.append(self.get_latent(give_mean=False)[0])
+        latent = np.array(latent)
+
+        qz_v = np.var(latent,
+                       axis=0,
+                       dtype=np.float64)
+
+        if norm:
+            norm_qz_v = [np.linalg.norm(v) for v in qz_v]
+            return norm_qz_v
+
+        return qz_v
 
 
 class TreeTrainer(Trainer):
@@ -235,11 +315,11 @@ class TreeTrainer(Trainer):
         super().__init__(model, gene_dataset, **kwargs)
         self.n_epochs_kl_warmup = n_epochs_kl_warmup
         self.clades = []
-        self.train_set, self.test_set = self.train_test_validation(
-            model, gene_dataset, train_size, test_size
+        self.train_set = self.train_test_validation( #, self.test_set
+            model, gene_dataset, train_size
         )
         self.train_set.to_monitor = ["elbo"]
-        self.test_set.to_monitor = ["elbo"]
+        #self.test_set.to_monitor = ["elbo"]
         #self.validation_set.to_monitor = ["elbo"]
 
         self.barcodes = gene_dataset.barcodes
@@ -265,15 +345,17 @@ class TreeTrainer(Trainer):
         """
 
         sample_batch, local_l_mean, local_l_var, batch_index, _ = tensors
-        reconst_loss = self.model(
+        reconst_loss, mp_lik = self.model.forward(
             x=sample_batch,
             local_l_mean=local_l_mean,
             local_l_var=local_l_var,
             batch_index=batch_index,
             barcodes=self.barcodes,
         )
+
         loss = torch.mean(reconst_loss)
-        return loss
+        #print("LOSS (Elbo): {}".format(loss - (mp_lik / reconst_loss.shape[0])))
+        return loss - (mp_lik / reconst_loss.shape[0])
 
     def on_epoch_begin(self):
         if self.n_epochs_kl_warmup is not None:
@@ -343,11 +425,12 @@ class TreeTrainer(Trainer):
             leaf_bunch = l.indices
 
             if len(leaf_bunch) == 1:
-                x = random.random()
-                if x < train_size:
-                    train_indices.append([leaf_bunch[0]])
-                else:
-                    test_indices.append([leaf_bunch[0]])
+                #x = random.random()
+                #if x < train_size:
+                    #train_indices.append([leaf_bunch[0]])
+                #else:
+                    #test_indices.append([leaf_bunch[0]])
+                train_indices.append([leaf_bunch[0]])
 
             else:
                 n_train, n_test = _validate_shuffle_split(
@@ -368,10 +451,10 @@ class TreeTrainer(Trainer):
         return (
             self.create_posterior(
                 model, gene_dataset, train_indices, type_class=type_class
-            ),
-            self.create_posterior(
-                model, gene_dataset, test_indices, type_class=type_class
-            ),
+            )
+            #self.create_posterior(
+                #model, gene_dataset, test_indices, type_class=type_class
+            #),
             #self.create_posterior(
                 #model, gene_dataset, validate_indices, type_class=type_class
             #),
