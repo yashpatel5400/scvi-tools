@@ -98,6 +98,7 @@ class VAE(nn.Module):
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_observed_lib_size: bool = True,
+        ambient_rna: bool = False,
     ):
         super().__init__()
         self.dispersion = dispersion
@@ -110,6 +111,7 @@ class VAE(nn.Module):
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
         self.use_observed_lib_size = use_observed_lib_size
+        self.ambient_rna = ambient_rna
 
         if self.dispersion == "gene":
             self.px_r = torch.nn.Parameter(torch.randn(n_input))
@@ -167,7 +169,10 @@ class VAE(nn.Module):
             inject_covariates=deeply_inject_covariates,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
+            use_softmax=self.ambient_rna,
         )
+        if self.ambient_rna:
+            self.ambient_rna_offset = torch.nn.Parameter(torch.randn(n_input, n_batch))
 
     def get_latents(self, x, y=None) -> torch.Tensor:
         """
@@ -383,6 +388,12 @@ class VAE(nn.Module):
         elif self.dispersion == "gene":
             px_r = self.px_r
         px_r = torch.exp(px_r)
+
+        if self.ambient_rna:
+            amb_rna_off = F.linear(
+                one_hot(dec_batch_index, self.n_batch), self.ambient_rna_offset
+            )
+            px_rate = px_rate * torch.exp(amb_rna_off)
 
         return dict(
             px_scale=px_scale,
