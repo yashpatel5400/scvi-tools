@@ -2,6 +2,7 @@
 """Main module."""
 from typing import Iterable
 import numpy as np
+from scipy.special import gamma
 import torch
 import torch.nn.functional as F
 from torch.distributions import Normal, Poisson
@@ -303,6 +304,7 @@ class VAE(AbstractVAE):
         generative_outputs,
         kl_weight: float = 1.0,
         scale_loss: float = 1.0,
+        hsic_scale: float = 1.0,
     ):
         x = tensors[_CONSTANTS.X_KEY]
         local_l_mean = tensors[_CONSTANTS.LOCAL_L_MEAN_KEY]
@@ -348,6 +350,8 @@ class VAE(AbstractVAE):
             kl_divergence_l=kl_divergence_l, kl_divergence_z=kl_divergence_z
         )
         kl_global = 0.0
+
+        loss += hsic_objective(qz_m, inference_outputs["library"])
         return SCVILoss(loss, reconst_loss, kl_local, kl_global)
 
     @torch.no_grad()
@@ -567,3 +571,28 @@ class LDVAE(VAE):
             loadings = loadings[:, : -self.n_batch]
 
         return loadings
+
+
+def hsic_objective(z, s):
+
+    # use a gaussian RBF for every variable
+    def kernel(x1, x2, gamma=1.0):
+        dist_table = torch.unsqueeze(x1, 0) - torch.unsqueeze(x2, 1)
+        return torch.transpose(
+            torch.exp(-gamma * torch.sum(dist_table ** 2, dim=2)), 0, 1
+        )
+
+    d_z = z.shape[1]
+    d_s = s.shape[1]
+
+    gz = 2 * gamma(0.5 * (d_z + 1)) / gamma(0.5 * d_z)
+    gs = 2 * gamma(0.5 * (d_s + 1)) / gamma(0.5 * d_s)
+
+    zz = kernel(z, z, gamma=1.0 / (2.0 * gz))
+    ss = kernel(s, s, gamma=1.0 / (2.0 * gs))
+
+    hsic = 0
+    hsic += (zz * ss).mean()
+    hsic += zz.mean() * ss.mean()
+    hsic -= 2 * (zz.mean(1) * ss.mean(1)).mean()
+    return hsic.sqrt()
