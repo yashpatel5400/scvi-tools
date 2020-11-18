@@ -102,6 +102,7 @@ class VAE(AbstractVAE):
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_observed_lib_size: bool = True,
+        hsic_scale: float = 1.0,
     ):
         super().__init__()
         self.dispersion = dispersion
@@ -114,6 +115,7 @@ class VAE(AbstractVAE):
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
         self.use_observed_lib_size = use_observed_lib_size
+        self.hsic_scale = hsic_scale
 
         if self.dispersion == "gene":
             self.px_r = torch.nn.Parameter(torch.randn(n_input))
@@ -304,7 +306,6 @@ class VAE(AbstractVAE):
         generative_outputs,
         kl_weight: float = 1.0,
         scale_loss: float = 1.0,
-        hsic_scale: float = 100.0,
     ):
         x = tensors[_CONSTANTS.X_KEY]
         local_l_mean = tensors[_CONSTANTS.LOCAL_L_MEAN_KEY]
@@ -351,7 +352,7 @@ class VAE(AbstractVAE):
         )
         kl_global = 0.0
 
-        loss += hsic_scale * hsic_objective(qz_m, inference_outputs["library"])
+        loss += self.hsic_scale * hsic_objective(qz_m, inference_outputs["library"])
         return SCVILoss(loss, reconst_loss, kl_local, kl_global)
 
     @torch.no_grad()
