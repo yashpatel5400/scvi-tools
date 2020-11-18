@@ -352,7 +352,9 @@ class VAE(AbstractVAE):
         )
         kl_global = 0.0
 
-        loss += self.hsic_scale * hsic_objective(qz_m, inference_outputs["library"])
+        loss += self.hsic_scale * hsic_objective(
+            inference_outputs["z"], inference_outputs["library"]
+        )
         return SCVILoss(loss, reconst_loss, kl_local, kl_global)
 
     @torch.no_grad()
