@@ -172,7 +172,12 @@ class VAE(nn.Module):
             use_softmax=self.ambient_rna,
         )
         if self.ambient_rna:
-            self.ambient_rna_offset = torch.nn.Parameter(torch.randn(n_input, n_batch))
+            if n_batch > 1:
+                self.ambient_rna_offset = torch.nn.Parameter(
+                    torch.randn(n_input, n_batch)
+                )
+            else:
+                self.ambient_rna_offset = torch.nn.Parameter(torch.randn(n_input))
 
     def get_latents(self, x, y=None) -> torch.Tensor:
         """
@@ -390,9 +395,12 @@ class VAE(nn.Module):
         px_r = torch.exp(px_r)
 
         if self.ambient_rna:
-            amb_rna_off = F.linear(
-                one_hot(dec_batch_index, self.n_batch), self.ambient_rna_offset
-            )
+            if self.n_batch > 1:
+                amb_rna_off = F.linear(
+                    one_hot(dec_batch_index, self.n_batch), self.ambient_rna_offset
+                )
+            else:
+                amb_rna_off = self.ambient_rna_offset
             px_rate = px_rate * torch.exp(amb_rna_off)
 
         return dict(
