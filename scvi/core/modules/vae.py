@@ -121,7 +121,7 @@ class VAE(AbstractVAE):
         self.vamp_prior = vamp_prior
 
         if self.vamp_prior:
-            self.pseudo_input = torch.nn.Parameter(torch.zeros(vamp_prior_k, n_input))
+            self.pseudo_input = torch.nn.Parameter(torch.randn(vamp_prior_k, n_input))
 
         if self.dispersion == "gene":
             self.px_r = torch.nn.Parameter(torch.randn(n_input))
@@ -334,7 +334,8 @@ class VAE(AbstractVAE):
             ).sum(dim=1)
         else:
             qz_m_vamp, qz_v_vamp, z_vamp = self.z_encoder(
-                torch.exp(self.pseudo_input), torch.zeros_like(self.pseudo_input)[:, 0]
+                10e4 * F.softmax(self.pseudo_input),
+                torch.zeros_like(self.pseudo_input)[:, 0],
             )
             mix = torch.distributions.Categorical(
                 torch.ones(
