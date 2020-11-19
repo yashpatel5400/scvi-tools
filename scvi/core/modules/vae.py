@@ -339,6 +339,7 @@ class VAE(AbstractVAE):
             mix = torch.distributions.Categorical(
                 torch.ones(
                     qz_m_vamp.shape[0],
+                    device=qz_m_vamp.device,
                 )
             )
             comp = torch.distributions.Independent(
