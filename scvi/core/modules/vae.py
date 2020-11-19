@@ -103,6 +103,8 @@ class VAE(AbstractVAE):
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_observed_lib_size: bool = True,
         hsic_scale: float = 1.0,
+        vamp_prior: bool = False,
+        vamp_prior_k: int = 10,
     ):
         super().__init__()
         self.dispersion = dispersion
@@ -116,6 +118,10 @@ class VAE(AbstractVAE):
         self.encode_covariates = encode_covariates
         self.use_observed_lib_size = use_observed_lib_size
         self.hsic_scale = hsic_scale
+        self.vamp_prior = vamp_prior
+
+        if self.vamp_prior:
+            self.pseudo_input = torch.nn.Parameter(torch.randn(vamp_prior_k, n_input))
 
         if self.dispersion == "gene":
             self.px_r = torch.nn.Parameter(torch.randn(n_input))
@@ -322,9 +328,30 @@ class VAE(AbstractVAE):
         mean = torch.zeros_like(qz_m)
         scale = torch.ones_like(qz_v)
 
-        kl_divergence_z = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(
-            dim=1
-        )
+        if not self.vamp_prior:
+            kl_divergence_z = kl(
+                Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)
+            ).sum(dim=1)
+        else:
+            qz_m_vamp, qz_v_vamp, z_vamp = self.z_encoder(
+                self.pseudo_input, torch.zeros_like(self.pseudo_input)[:, 0]
+            )
+            mix = torch.distributions.Categorical(
+                torch.ones(
+                    qz_m_vamp.shape[0],
+                )
+            )
+            comp = torch.distributions.Independent(
+                Normal(qz_m_vamp, torch.sqrt(qz_v_vamp)), 1
+            )
+            gmm = torch.distributions.MixtureSameFamily(mix, comp)
+            E_log_p_z = gmm.log_prob(inference_outputs["z"])
+            E_log_q_z = (
+                Normal(qz_m, torch.sqrt(qz_v)).log_prob(inference_outputs["z"]).sum(1)
+            )
+
+            # KLD = E_q log q - E_q log p
+            kl_divergence_z = -(E_log_p_z - E_log_q_z)
 
         if not self.use_observed_lib_size:
             kl_divergence_l = kl(
