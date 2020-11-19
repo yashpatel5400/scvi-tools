@@ -121,7 +121,7 @@ class VAE(AbstractVAE):
         self.vamp_prior = vamp_prior
 
         if self.vamp_prior:
-            self.pseudo_input = torch.nn.Parameter(torch.randn(vamp_prior_k, n_input))
+            self.pseudo_input = torch.nn.Parameter(torch.zeros(vamp_prior_k, n_input))
 
         if self.dispersion == "gene":
             self.px_r = torch.nn.Parameter(torch.randn(n_input))
