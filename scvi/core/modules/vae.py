@@ -334,7 +334,7 @@ class VAE(AbstractVAE):
             ).sum(dim=1)
         else:
             qz_m_vamp, qz_v_vamp, z_vamp = self.z_encoder(
-                self.pseudo_input, torch.zeros_like(self.pseudo_input)[:, 0]
+                torch.exp(self.pseudo_input), torch.zeros_like(self.pseudo_input)[:, 0]
             )
             mix = torch.distributions.Categorical(
                 torch.ones(
