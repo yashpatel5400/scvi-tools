@@ -102,6 +102,7 @@ class VAE(AbstractVAE):
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_observed_lib_size: bool = True,
+        bound: str = "ELBO",
     ):
         super().__init__()
         self.dispersion = dispersion
@@ -114,6 +115,8 @@ class VAE(AbstractVAE):
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
         self.use_observed_lib_size = use_observed_lib_size
+        self.bound = bound
+        self.do_rsample = False if bound == "KL" else True
 
         if self.dispersion == "gene":
             self.px_r = torch.nn.Parameter(torch.randn(n_input))
@@ -240,9 +243,12 @@ class VAE(AbstractVAE):
             categorical_input = torch.split(cat_covs, 1, dim=1)
         else:
             categorical_input = tuple()
-        qz_m, qz_v, z = self.z_encoder(encoder_input, batch_index, *categorical_input)
+
+        qz_m, qz_v, z = self.z_encoder(
+            encoder_input, batch_index, *categorical_input, do_rsample=self.do_rsample
+        )
         ql_m, ql_v, library_encoded = self.l_encoder(
-            encoder_input, batch_index, *categorical_input
+            encoder_input, batch_index, *categorical_input, do_rsample=self.do_rsample
         )
 
         if not self.use_observed_lib_size:
@@ -316,39 +322,81 @@ class VAE(AbstractVAE):
         px_rate = generative_outputs["px_rate"]
         px_r = generative_outputs["px_r"]
         px_dropout = generative_outputs["px_dropout"]
+        z = inference_outputs["z"]
+        library = inference_outputs["library"]
 
         mean = torch.zeros_like(qz_m)
         scale = torch.ones_like(qz_v)
 
-        kl_divergence_z = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(
-            dim=1
-        )
-
-        if not self.use_observed_lib_size:
-            kl_divergence_l = kl(
-                Normal(ql_m, torch.sqrt(ql_v)),
-                Normal(local_l_mean, torch.sqrt(local_l_var)),
+        if self.bound == "ELBO":
+            kl_divergence_z = kl(
+                Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)
             ).sum(dim=1)
+
+            if not self.use_observed_lib_size:
+                kl_divergence_l = kl(
+                    Normal(ql_m, torch.sqrt(ql_v)),
+                    Normal(local_l_mean, torch.sqrt(local_l_var)),
+                ).sum(dim=1)
+            else:
+                kl_divergence_l = 0.0
+
+            reconst_loss = self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)
+
+            kl_local_for_warmup = kl_divergence_l
+            kl_local_no_warmup = kl_divergence_z
+            kl_global_for_warmup = 0.0
+            kl_global_no_warmup = 0.0
+
+            weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
+            weighted_kl_global = kl_weight * kl_global_for_warmup + kl_global_no_warmup
+
+            loss = (
+                n_obs * torch.mean(reconst_loss + weighted_kl_local)
+                + weighted_kl_global
+            )
+            loss /= n_obs
+
+            kl_local = dict(
+                kl_divergence_l=kl_divergence_l, kl_divergence_z=kl_divergence_z
+            )
+            kl_global = 0.0
         else:
-            kl_divergence_l = 0.0
+            # All other bounds rely on likelihood ratios
+            # and use multiple particules
+            log_px_latents = -self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)
+            if not self.use_observed_lib_size:
+                p_library = Normal(local_l_mean, torch.sqrt(local_l_var)).log_prob(
+                    library
+                )
+                q_library = Normal(ql_m, torch.sqrt(local_l_var)).log_prob(library)
+            else:
+                p_library = 0.0
+                q_library = 0.0
+            p_z = Normal(mean, scale).log_prob(z)
+            q_z = Normal(qz_m, torch.sqrt(qz_v)).log_prob(z)
 
-        reconst_loss = self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)
+            log_priors = p_library + p_z
+            log_proposals = q_library + q_z
 
-        kl_local_for_warmup = kl_divergence_l
-        kl_local_no_warmup = kl_divergence_z
-        kl_global_for_warmup = 0.0
-        kl_global_no_warmup = 0.0
+            log_ratios = log_px_latents + log_priors - log_proposals
+            assert log_ratios.ndim == 3
+            if self.bound == "IWELBO":
+                loss = -(torch.softmax(log_ratios, dim=0).detach() * log_ratios).sum(
+                    dim=0
+                )
 
-        weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
-        weighted_kl_global = kl_weight * kl_global_for_warmup + kl_global_no_warmup
+            elif self.bound == "CUBO":
+                ws = torch.softmax(2 * log_ratios, dim=0)  # Corresponds to squaring
+                cubo = ws.detach() * (-1) * log_ratios
+                loss = cubo.sum(dim=0)
 
-        loss = n_obs * torch.mean(reconst_loss + weighted_kl_local) + weighted_kl_global
-        loss /= n_obs
-
-        kl_local = dict(
-            kl_divergence_l=kl_divergence_l, kl_divergence_z=kl_divergence_z
-        )
-        kl_global = 0.0
+            elif self.bound == "KL":
+                ws = torch.softmax(log_ratios, dim=0)
+                rev_kl = ws.detach() * (-1) * log_proposals
+                loss = rev_kl.sum(dim=0)
+            else:
+                raise ValueError("Bound {} is not recognized".formatl(self.lower_bound))
         return SCVILoss(loss, reconst_loss, kl_local, kl_global)
 
     @torch.no_grad()

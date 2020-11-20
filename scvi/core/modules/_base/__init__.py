@@ -10,8 +10,11 @@ from torch.nn import ModuleList
 from ..utils import one_hot
 
 
-def reparameterize_gaussian(mu, var):
-    return Normal(mu, var.sqrt()).rsample()
+def reparameterize_gaussian(mu, var, do_rsample: bool = True):
+    if do_rsample:
+        return Normal(mu, var.sqrt()).rsample()
+    else:
+        return Normal(mu, var.sqrt()).rsample()
 
 
 def identity(x):
@@ -259,7 +262,7 @@ class Encoder(nn.Module):
         else:
             self.z_transformation = identity
 
-    def forward(self, x: torch.Tensor, *cat_list: int):
+    def forward(self, x: torch.Tensor, *cat_list: int, do_rsample=True):
         r"""
         The forward computation for a single sample.
 
@@ -284,7 +287,7 @@ class Encoder(nn.Module):
         q = self.encoder(x, *cat_list)
         q_m = self.mean_encoder(q)
         q_v = torch.exp(self.var_encoder(q)) + 1e-4
-        latent = self.z_transformation(reparameterize_gaussian(q_m, q_v))
+        latent = self.z_transformation(reparameterize_gaussian(q_m, q_v, do_rsample=do_rsample))
         return q_m, q_v, latent
 
 

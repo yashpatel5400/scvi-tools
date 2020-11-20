@@ -31,6 +31,7 @@ class VAETask(pl.LightningModule):
         n_iter_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = 400,
         reduce_lr_on_plateau: bool = False,
+        n_samples: int = 1,
         lr_factor: float = 0.6,
         lr_patience: int = 30,
         lr_threshold: float = 0.0,
@@ -41,6 +42,7 @@ class VAETask(pl.LightningModule):
         super(VAETask, self).__init__()
         self.model = vae_model
         self.lr = lr
+        self.n_samples = n_samples
         self.weight_decay = weight_decay
         self.n_iter_kl_warmup = n_iter_kl_warmup
         self.n_epochs_kl_warmup = n_epochs_kl_warmup
@@ -56,7 +58,10 @@ class VAETask(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
         loss_kwargs = dict(kl_weight=self.kl_weight)
-        inference_outputs, _, scvi_loss = self.forward(batch, loss_kwargs=loss_kwargs)
+        inference_kwargs = dict(n_samples=self.n_samples)
+        inference_outputs, _, scvi_loss = self.forward(
+            batch, loss_kwargs=loss_kwargs, inference_kwargs=inference_kwargs
+        )
         reconstruction_loss = scvi_loss.reconstruction_loss
         # pytorch lightning automatically backprops on "loss"
         return {

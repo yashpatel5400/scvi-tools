@@ -127,3 +127,14 @@ def test_annealing_procedures(save_path):
     )
     trainer_cortex_vae.train(n_epochs=2)
     assert trainer_cortex_vae.kl_weight >= 0.99, "Annealing should be over"
+
+
+def test_other_bounds(save_path):
+    n_latent = 5
+    adata = scvi.data.synthetic_iid()
+    for bound in ["IWELBO", "CUBO", "KL"]:
+        model = scvi.model.SCVI(adata, n_latent=n_latent, bound=bound)
+        model.train(1, train_size=0.5)
+
+        trainer = AdapterTrainer(model.model, adata, model.trainer.test_set)
+        trainer.train(n_epochs=1, n_path=1)
