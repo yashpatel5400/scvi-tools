@@ -8,6 +8,7 @@ from torch.distributions import Normal, LogNormal, kl_divergence as kl
 from scvi.models.log_likelihood import log_zinb_positive, log_nb_positive
 from scvi.models.modules import Encoder, DecoderSCVI, LinearDecoderSCVI
 from scvi.models.utils import one_hot
+import torch.distributions as distributions
 from scvi.models.vae import VAE
 import pdb
 import time
@@ -56,9 +57,10 @@ class TreeVAE(VAE):
         dropout_rate: float = 0.1,
         dispersion: str = "gene",
         log_variational: bool = True,
-        reconstruction_loss: str = "zinb",
+        reconstruction_loss: str = "nb",
         tree: Tree = None,
-        use_clades: bool = None
+        use_clades: bool = None,
+        prior_t: float = 1.0
     ):
 
         super().__init__(
@@ -108,6 +110,9 @@ class TreeVAE(VAE):
         #loss function
         self.loss = {}
         self.loss['Reconstruction'], self.loss['MP_lik'], self.loss['Gaussian pdf'] = [], [], []
+
+        # branch length got MP
+        self.prior_t = prior_t
 
     def initialize_messages(self, evidence, barcodes, d):
 
@@ -176,7 +181,7 @@ class TreeVAE(VAE):
         elif n == 1:
             # this happens when passing through the root
             k = incoming_messages[0]
-            root_node.nu = k.nu + 1.0  #root_node.get_distance(k)
+            root_node.nu = k.nu + self.prior_t  #root_node.get_distance(k)
             root_node.mu = k.mu
             root_node.log_z = 0
 
@@ -190,7 +195,7 @@ class TreeVAE(VAE):
             for i in range(n):
                 k = incoming_messages[i]
                 # nu
-                children_nu[i] = k.nu + 1.0  #root_node.get_distance(k)
+                children_nu[i] = k.nu + self.prior_t  #root_node.get_distance(k)
                 root_node.nu += 1. / children_nu[i]
                 # mu
                 children_mu[i] = k.mu / children_nu[i]
@@ -228,7 +233,7 @@ class TreeVAE(VAE):
             Z_3 = 0
 
             # nested for loop --> need to optimize with numba jit
-            t0 = time.time()
+            #t0 = time.time()
             for j in range(n):
                 for h in range(n):
                     if h == j:
@@ -286,16 +291,20 @@ class TreeVAE(VAE):
 
 
     def inference(
-        self, x, batch_index=None, y=None, n_samples=1
+        self, x, batch_index=None, y=None, n_samples=1, transform_batch=None
     ):
         """Helper function used in forward pass
                 """
 
+        x_ = x
+        if self.log_variational:
+            x_ = torch.log(1 + x_)
+
         # Sampling
-        qz_m, qz_v, z = self.z_encoder(x, y)
+        qz_m, qz_v, z = self.z_encoder(x_, y)
 
         # we consider the library size fixed
-        ql_m, ql_v, library = self.l_encoder(x)
+        ql_m, ql_v, library = self.l_encoder(x_)
 
         if n_samples > 1:
             qz_m = qz_m.unsqueeze(0).expand((n_samples, qz_m.size(0), qz_m.size(1)))
@@ -309,7 +318,10 @@ class TreeVAE(VAE):
             #ql_v = ql_v.unsqueeze(0).expand((n_samples, ql_v.size(0), ql_v.size(1)))
             #library = Normal(ql_m, ql_v.sqrt()).sample()
 
-        dec_batch_index = batch_index
+        if transform_batch is not None:
+            dec_batch_index = transform_batch * torch.ones_like(batch_index)
+        else:
+            dec_batch_index = batch_index
 
         # Library size fixed
         library = torch.log(x.sum(dim=1,
@@ -319,6 +331,7 @@ class TreeVAE(VAE):
         px_scale, px_r, px_rate, px_dropout = self.decoder(
             self.dispersion, z, library, dec_batch_index, y
         )
+
         if self.dispersion == "gene-label":
             px_r = F.linear(
                 one_hot(y, self.n_labels), self.px_r

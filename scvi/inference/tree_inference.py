@@ -9,6 +9,7 @@ from itertools import cycle
 
 import numpy as np
 import torch
+import torch.distributions as distributions
 
 import copy
 import matplotlib.pyplot as plt
@@ -143,6 +144,8 @@ class TreePosterior(Posterior):
     def imputation_mean(
         self,
         n_samples,
+        batch_size=64,
+        transform_batch=None
     ):
         """Imputes px_rate over self cells
 
@@ -157,17 +160,31 @@ class TreePosterior(Posterior):
             (n_samples, n_cells, n_genes) px_rates squeezed array
 
         """
+        import pdb
+
+        if (transform_batch is None) or (isinstance(transform_batch, int)):
+            transform_batch = [transform_batch]
         imputed_arr = []
-        for tensors in self:
-            sample_batch, _, _, batch_index, labels = tensors
-            px_rate = self.model.inference(
-                sample_batch,
-                batch_index=batch_index,
-                y=labels,
-                n_samples=n_samples
-            )
-            imputed_arr.append(np.concatenate([np.array(px_rate.cpu())]))
+        with torch.no_grad():
+            for batch in transform_batch:
+                imputed_list_batch = []
+                for tensors in self:
+                    sample_batch, _, _, batch_index, labels = tensors
+                    if len(sample_batch.shape) > 2:
+                        sample_batch = sample_batch.view(sample_batch.shape[0], -1)
+                    px_rate = self.model.inference(
+                        sample_batch,
+                        batch_index=batch_index,
+                        y=labels,
+                        n_samples=n_samples,
+                        transform_batch=batch,
+                    )["px_rate"]
+
+                    imputed_list_batch += [np.array(px_rate.cpu())]
+                imputed_arr.append(np.concatenate(imputed_list_batch))
         imputed_arr = np.array(imputed_arr)
+        # shape: (len(transformed_batch), n_samples, n_cells, n_genes) if n_samples > 1
+        # else shape: (len(transformed_batch), n_cells, n_genes)
         return imputed_arr.mean(0).squeeze()
 
 
@@ -221,7 +238,77 @@ class TreePosterior(Posterior):
                 )
 
     @torch.no_grad()
-    def imputation_internal(self, query_node):
+    def generate_leaves(
+        self,
+        n_samples: int = 100,
+        batch_size: int = 128,
+    ):
+        """Create observation samples from the Posterior Predictive distribution
+
+        Parameters
+        ----------
+        n_samples
+            Number of required samples for each cell
+        genes
+            Indices of genes of interest
+        batch_size
+            Desired Batch size to generate data
+
+        Returns
+        -------
+        x_new : :py:class:`torch.Tensor`
+            tensor with shape (n_cells, n_genes, n_samples)
+        x_old : :py:class:`torch.Tensor`
+            tensor with shape (n_cells, n_genes)
+
+        """
+        assert self.model.reconstruction_loss in ["zinb", "nb", "poisson"]
+        x_old = []
+        x_new = []
+        for tensors in self.update({"batch_size": batch_size}):
+            sample_batch, _, _, batch_index, labels = tensors
+            outputs = self.model.inference(
+                sample_batch, batch_index=batch_index, y=labels, n_samples=n_samples
+            )
+            px_r = outputs["px_r"]
+            px_rate = outputs["px_rate"]
+            px_dropout = outputs["px_dropout"]
+
+            if self.model.reconstruction_loss == "poisson":
+                l_train = px_rate
+                l_train = torch.clamp(l_train, max=1e8)
+                dist = distributions.Poisson(
+                    l_train
+                )  # Shape : (n_samples, n_cells_batch, n_genes)
+            elif self.model.reconstruction_loss == "nb":
+                dist = distributions.NegativeBinomial(mu=px_rate, theta=px_r)
+            elif self.model.reconstruction_loss == "zinb":
+                dist = distributions.ZeroInflatedNegativeBinomial(
+                    mu=px_rate, theta=px_r, zi_logits=px_dropout
+                )
+            else:
+                raise ValueError(
+                    "{} reconstruction error not handled right now".format(
+                        self.model.reconstruction_loss
+                    )
+                )
+            gene_expressions = dist.sample().permute(
+                [1, 2, 0]
+            )  # Shape : (n_cells_batch, n_genes, n_samples)
+
+            x_old.append(sample_batch.cpu())
+            x_new.append(gene_expressions.cpu())
+
+        x_old = torch.cat(x_old)  # Shape (n_cells, n_genes)
+        x_new = torch.cat(x_new)  # Shape (n_cells, n_genes, n_samples)
+        return x_new.numpy(), x_old.numpy()
+
+
+    @torch.no_grad()
+    def imputation_internal(self,
+                            query_node,
+                            give_mean=False,
+                            library_size=10000):
         """
         :param self:
         :param query_node: barcode of the query node node for which we want to perform missing value imputation
@@ -240,8 +327,9 @@ class TreePosterior(Posterior):
         self.model.eval()
         px_scale, px_r, px_rate, px_dropout = self.model.decoder.forward(self.model.dispersion,
                                                                     z_star.view(1, -1).float(),
-                                                                  torch.from_numpy(np.array([np.log(10000)])),
+                                                                  torch.from_numpy(np.array([np.log(library_size)])),
                                                                   0)
+
         if px_r:
             dispersion = px_r
         else:
@@ -251,7 +339,11 @@ class TreePosterior(Posterior):
         l_train = Gamma(dispersion, (1 - p) / p).sample()
         data = Poisson(l_train).sample().cpu().numpy()
 
+        if give_mean:
+            return px_rate
+
         return data
+
 
     @torch.no_grad()
     def empirical_qz_v(self, n_samples, norm):
@@ -296,7 +388,7 @@ class TreeTrainer(Trainer):
 
 	Examples:
 		>>> tree_dataset = TreeDataset(GeneExpressionDataset, tree)
-        >>> treevae= treeVAE(tree_dataset.nb_genes, tree = tree_dataset.tre
+        >>> treevae= treeVAE(tree_dataset.nb_genes, tree = tree_dataset.tree
         ... n_batch=tree_dataset.n_batches * use_batches, use_cuda=True)
         >>> trainer = TreeTrainer(treevae, tree_dataset)
         >>> trainer.train(n_epochs=400)

@@ -13,7 +13,8 @@ import unittest
 
 class TestMessagePassing(TestCase):
     def test_mp_inference(self):
-        tree_name = "../data/lg7_tree_hybrid_priors.alleleThresh.processed.txt"
+        #tree_name = "../data/lg7_tree_hybrid_priors.alleleThresh.processed.txt"
+        tree_name = "../data/tree_test.txt"
         with open(tree_name, "r") as myfile:
             tree_string = myfile.readlines()
 
@@ -82,7 +83,8 @@ class TestMessagePassing(TestCase):
         print("")
         print("Test 2: Message Passing Posterior Predictive Density at internal node")
 
-        query_node = '0|0|0|0|9|0|3|7|0|-|-|-|16|0|0|0|2|0|0|2|0|0|0|0|8|0|2|0|0|-|-|2|0|0|0|0|0|-|-|-|0|0|0|2|2|2|0|0' # --> internal node
+        #query_node = '0|0|0|0|9|0|3|7|0|-|-|-|16|0|0|0|2|0|0|2|0|0|0|0|8|0|2|0|0|-|-|2|0|0|0|0|0|-|-|-|0|0|0|2|2|2|0|0' # --> internal node
+        query_node = "0|0|0|0|5|10|0|0|0|2|0|0|0|0|0|0|0|0|2|0|0|0|0|0|0|0|0|0|0"
 
         # evidence
         evidence_leaves = np.hstack([np.array([1.0] * d)] * (len(leaves)))
