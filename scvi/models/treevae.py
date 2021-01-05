@@ -107,12 +107,11 @@ class TreeVAE(VAE):
         # leaves barcodes
         self.barcodes = [l.name for l in self.tree.get_leaves()]
 
-        #loss function
-        self.loss = {}
-        self.loss['Reconstruction'], self.loss['MP_lik'], self.loss['Gaussian pdf'] = [], [], []
-
         # branch length got MP
         self.prior_t = prior_t
+
+        # encoder's variance
+        self.encoder_variance = []
 
     def initialize_messages(self, evidence, barcodes, d):
 
@@ -384,6 +383,8 @@ class TreeVAE(VAE):
         z = outputs["z"]
         library = outputs["library"]
 
+        self.encoder_variance.append(np.linalg.norm(qz_v.detach().numpy(), axis=1))
+
         # message passing likelihood
         self.initialize_visit()
         self.initialize_messages(
@@ -399,15 +400,17 @@ class TreeVAE(VAE):
 
         qz = Normal(qz_m, torch.sqrt(qz_v)).log_prob(z).sum(dim=-1)
 
+        #scVI
+        mean = torch.zeros_like(qz_m)
+        scale = torch.ones_like(qz_v)
+        qz = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(
+            dim=1)
+
         # library size likelihood
         # pl = LogNormal(ql_m, torch.sqrt(ql_v)).log_prob(l).sum(dim=1)
 
-        self.loss['MP_lik'].append(mp_lik / z.shape[0])
-        self.loss['Reconstruction'].append(torch.mean(self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)).item())
-        self.loss['Gaussian pdf'].append(torch.mean(qz).item())
-
         reconst_loss = (
-            self.get_reconstruction_loss(x, px_rate, px_r, px_dropout) + qz
+            self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)
         )
 
-        return reconst_loss, mp_lik
+        return reconst_loss, qz, mp_lik

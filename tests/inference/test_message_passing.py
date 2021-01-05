@@ -70,7 +70,7 @@ class TestMessagePassing(TestCase):
         print("Test 1: Message passing output O(nd): ", mp_lik)
 
         # likelihood via  covariance matrix Marginalization + inversion
-        leaves_covariance, full_covariance = precision_matrix(tree_name, d)
+        leaves_covariance, full_covariance = precision_matrix(tree_name, d, 1)
         leaves_mean = np.array([0] * len(leaves) * d)
         pdf_likelihood = multivariate_normal.logpdf(evidence_leaves,
                                                     leaves_mean,

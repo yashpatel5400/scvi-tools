@@ -119,14 +119,13 @@ class TreePosterior(Posterior):
 		plus a term that is constant with respect to the variational distribution.
 		It still gives good insights on the modeling of the data, and is fast to compute.
 		"""
-        # Iterate once over the posterior and compute the elbo
 
-        elbo = 0
+        # Iterate once over the posterior and compute the elbo
         print("computing elbo")
         self.use_cuda = False
         for i_batch, tensors in enumerate(self):
             sample_batch, local_l_mean, local_l_var, batch_index, labels = tensors[:5]
-            reconst_loss, mp_lik = vae(
+            reconst_loss, qz, mp_lik = vae.forward(
                 sample_batch,
                 local_l_mean,
                 local_l_var,
@@ -135,10 +134,17 @@ class TreePosterior(Posterior):
                 y=labels,
                 **kwargs
             )
-            elbo += torch.sum(reconst_loss).item()
+            #elbo1 = torch.sum(reconst_loss).item()
+            #elbo2 = torch.sum(qz).item()
+
         n_samples = len(self.indices)
-        print("ELBO Loss: {}".format((elbo - mp_lik) / n_samples))
-        return (elbo - mp_lik) / n_samples
+        elbo1 = torch.mean(reconst_loss).item()
+        elbo2 = torch.mean(qz).item()
+        elbo3 = -1 * mp_lik / n_samples
+        elbo = elbo1 + elbo2 + elbo3
+        print("ELBO Loss: {}".format(elbo))
+        #print(elbo1, elbo2, elbo3)
+        return elbo
 
     @torch.no_grad()
     def imputation_mean(
@@ -160,7 +166,6 @@ class TreePosterior(Posterior):
             (n_samples, n_cells, n_genes) px_rates squeezed array
 
         """
-        import pdb
 
         if (transform_batch is None) or (isinstance(transform_batch, int)):
             transform_batch = [transform_batch]
@@ -308,20 +313,38 @@ class TreePosterior(Posterior):
     def imputation_internal(self,
                             query_node,
                             give_mean=False,
-                            library_size=10000):
+                            library_size=100,
+                            averaging=True):
         """
         :param self:
         :param query_node: barcode of the query node node for which we want to perform missing value imputation
         :return: the imputed gene expression value at the query node
         """
         # 1. sampling from posterior z ~ q(z|x) at the leaves
-        z = self.get_latent(give_mean=False)[0]
+        if not averaging:
+            z = self.get_latent(give_mean=False)[0]
+        else:
+            latents = [self.get_latent(give_mean=False)[0] for n in range(10)]
+            z = np.mean(np.stack(latents), axis=0)
 
         # 2. Message passing & sampling from multivariate normal z* ~ p(z*|z)
-        mu_star, nu_star = self.model.posterior_predictive_density(query_node=query_node,
-                                                            evidence=z)
+        if not averaging:
+            mu_star, nu_star = self.model.posterior_predictive_density(query_node=query_node,
+                                                                evidence=z)
 
-        z_star = Normal(mu_star, torch.sqrt(torch.from_numpy(np.array([nu_star])))).sample()
+            z_star = Normal(mu_star, torch.sqrt(torch.from_numpy(np.array([nu_star])))).sample()
+        else:
+            normal_params = [self.model.posterior_predictive_density(query_node=query_node,
+                                                                evidence=z) for n in range(10)]
+            latents = []
+            for (mu, nu) in normal_params:
+                latents.append(Normal(mu, torch.sqrt(torch.from_numpy(np.array([nu])))).sample())
+
+            #import pdb
+            #pdb.set_trace()
+
+            z_star = torch.mean(torch.stack(latents),
+                                dim=0)
 
         # 3. Decode latent vector x* ~ p(x*|z = z*)
         self.model.eval()
@@ -421,6 +444,11 @@ class TreeTrainer(Trainer):
         #null_latent = np.stack([np.array([0]*n_latent) for a in range(len(gene_dataset.barcodes))], axis=0)
         #self.model.initialize_messages(null_latent, gene_dataset.barcodes, n_latent)
 
+        #loss function
+        self.history_train, self.history_eval = {}, {}
+        self.history_train['elbo'], self.history_train['Reconstruction'], self.history_train['MP_lik'], self.history_train['Gaussian pdf'] = [], [], [], []
+        self.history_eval['elbo'], self.history_eval['Reconstruction'], self.history_eval['MP_lik'], self.history_eval['Gaussian pdf'] = [], [], [], []
+
     @property
     def posteriors_loop(self):
         return ["train_set"]
@@ -437,7 +465,7 @@ class TreeTrainer(Trainer):
         """
 
         sample_batch, local_l_mean, local_l_var, batch_index, _ = tensors
-        reconst_loss, mp_lik = self.model.forward(
+        reconst_loss, qz, mp_lik = self.model.forward(
             x=sample_batch,
             local_l_mean=local_l_mean,
             local_l_var=local_l_var,
@@ -445,9 +473,17 @@ class TreeTrainer(Trainer):
             barcodes=self.barcodes,
         )
 
-        loss = torch.mean(reconst_loss)
-        #print("LOSS (Elbo): {}".format(loss - (mp_lik / reconst_loss.shape[0])))
-        return loss - (mp_lik / reconst_loss.shape[0])
+        #import pdb
+        #pdb.set_trace()
+
+        loss_1 = torch.mean(reconst_loss)
+        self.history_train['Reconstruction'].append(loss_1.item())
+        loss_2 = self.kl_weight * torch.mean(qz)
+        self.history_train['Gaussian pdf'].append(self.kl_weight * loss_2.item())
+        loss_3 = -1 * self.kl_weight * (mp_lik / reconst_loss.shape[0])
+        self.history_train['MP_lik'].append(self.kl_weight * loss_3.item())
+        self.history_train['elbo'].append(loss_1.item() + loss_2.item() + loss_3.item())
+        return loss_1 + loss_2 + loss_3
 
     def on_epoch_begin(self):
         if self.n_epochs_kl_warmup is not None:
