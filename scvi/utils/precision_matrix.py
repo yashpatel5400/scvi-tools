@@ -3,7 +3,7 @@ import numpy as np
 from ete3 import Tree
 
 
-def precision_matrix(tree_name, d):
+def precision_matrix(tree_name, d, branch_length):
     """
     :param tree_name: path of the ete3 tree file
     :param d: dimension of latent space
@@ -41,7 +41,7 @@ def precision_matrix(tree_name, d):
     inverse_covariance = np.zeros((N * d, N * d))
 
     # parameter to control the variance
-    t = 1
+    t = 1 / branch_length
     for i in parents:
         pi_ind = parents[i]
         inverse_covariance[i * d: (i + 1) * d, i * d: (i + 1) * d] += np.identity(d) * t
