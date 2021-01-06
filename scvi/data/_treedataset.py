@@ -1,6 +1,7 @@
 import logging
 from scvi.data._scvidataset import ScviDataset
 from ete3 import Tree
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,33 @@ class TreeDataset(ScviDataset):
             # assert we have barcode labels for cells
             if "barcodes" not in scvidataset.attributes_and_types:
                 logger.error("Must provide cell barcode, or names, as a cell attribute.")
+
+        super().__init__()
+
+        self.set_distance()
+        if self.adata.obs_names:
+            self.filter_cells_by_tree()
+
+    def set_distance(self):
+        # set distance
+        for n in self.tree.traverse():
+            n.distance = self.tree.get_distance(n)
+
+    def filter_cells_by_tree(self):
+        """
+        Prunes away cells that don't appear consistently between the tree object and the
+        RNA expression dataset.
+        """
+
+        leaves = self.tree.get_leaf_names()
+        keep_barcodes = np.intersect1d(leaves, list(self.adata.obs_names))
+        self.tree.prune(keep_barcodes)
+
+        #return self.filter_cells_by_attribute(keep_barcodes, on="barcodes")
+
+
+
+
 
 
 
