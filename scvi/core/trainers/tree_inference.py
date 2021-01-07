@@ -38,7 +38,7 @@ class SequentialCladeSampler(SubsetRandomSampler):
         # randomly draw a cell from each clade (i.e. bunch of leaves)
         return iter([np.random.choice(l) for l in self.clades if len(l) > 0])
 
-class Treetrainer(Trainer):
+class TreeTrainer(Trainer):
     r"""The VariationalInference class for the unsupervised training of an autoencoder
     with a latent tree structure.
     Args:
