@@ -1,25 +1,12 @@
 """Main module."""
-from typing import Dict, Tuple
 
-import numpy as np
 import torch
 import time
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.distributions import Normal, Poisson
+from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
-
-from scvi._compat import Literal
-from scvi.core.distributions import (
-    NegativeBinomial,
-    ZeroInflatedNegativeBinomial,
-)
-
-from ._base import DecoderSCVI, Encoder, LinearDecoderSCVI
-from .utils import one_hot
 from scvi.core.modules.vae import VAE
 import numpy as np
-from numba import jit
+#from numba import jit
 
 torch.backends.cudnn.benchmark = True
 
