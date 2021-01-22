@@ -1,3 +1,4 @@
+import copy
 import os
 import numpy as np
 import pytest
@@ -471,3 +472,35 @@ def test_multiple_covariates(save_path):
 
     m = TOTALVI(adata)
     m.train(1)
+
+
+def test_cpu_gpu_exact():
+
+    n_latent = 5
+    adata = synthetic_iid()
+    model = SCVI(adata, n_latent=n_latent)
+    model.train(1, check_val_every_n_epoch=1, train_size=0.5)
+    assert model.model.training is False
+    z1 = model.get_latent_representation()
+
+    model2 = copy.deepcopy(model)
+    model2.model.cpu()
+    assert model2.model.training is False
+    z2 = model2.get_latent_representation()
+
+    model3 = copy.deepcopy(model2)
+    model3.model.cuda()
+    z3 = model3.get_latent_representation()
+    np.testing.assert_array_equal(z1, z3)
+
+    w1 = model.model.z_encoder.encoder.fc_layers[0][1].weight.cpu().detach().numpy()
+    w2 = model2.model.z_encoder.encoder.fc_layers[0][1].weight.detach().numpy()
+    np.testing.assert_array_equal(w1, w2)
+
+    w1 = model.model.z_encoder.encoder.fc_layers[0][0].weight.cpu().detach().numpy()
+    w2 = model2.model.z_encoder.encoder.fc_layers[0][0].weight.detach().numpy()
+
+    np.testing.assert_array_equal(
+        model.model.px_r.cpu().detach().numpy(), model2.model.px_r.detach().numpy()
+    )
+    np.testing.assert_array_equal(z1, z2)

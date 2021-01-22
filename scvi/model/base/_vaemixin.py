@@ -166,5 +166,5 @@ class VAEMixin:
                 else:
                     z = qz_m
 
-            latent += [z.cpu()]
-        return np.array(torch.cat(latent))
+            latent += [z.cpu().numpy()]
+        return np.concatenate(latent)
