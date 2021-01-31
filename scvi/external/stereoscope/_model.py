@@ -10,7 +10,8 @@ from scvi.dataloaders import AnnDataLoader
 from scvi.external.stereoscope._module import RNADeconv, SpatialDeconv
 from scvi.lightning import TrainingPlan
 from scvi.model.base import BaseModelClass
-
+from torch.utils.data import TensorDataset, DataLoader
+import torch
 
 class RNAStereoscope(BaseModelClass):
     """
@@ -188,10 +189,10 @@ class SpatialStereoscope(BaseModelClass):
         **model_kwargs,
     ):
         """
-        Alternate constructor for exploiting a pre-trained model on RNA-seq data
+        Alternate constructor for exploiting a pre-trained model on RNA-seq data.
 
         Parameters
-        -----------
+        ----------
         st_adata
             registed anndata object
         sc_model
@@ -217,10 +218,12 @@ class SpatialStereoscope(BaseModelClass):
 
     def get_proportions(self, keep_noise=False) -> np.ndarray:
         """
-        Returns the estimated cell type proportion for the spatial data. Shape is n_cells x n_labels OR n_cells x (n_labels + 1) if keep_noise
+        Returns the estimated cell type proportion for the spatial data.
+        
+        Shape is n_cells x n_labels OR n_cells x (n_labels + 1) if keep_noise.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         keep_noise
             whether to account for the noise term as a standalone cell type in the proportion estimate.
         """
@@ -232,6 +235,41 @@ class SpatialStereoscope(BaseModelClass):
             columns=column_names,
             index=self.adata.obs.index,
         )
+
+    @torch.no_grad()
+    def get_scale_for_ct(
+        self,
+        x: Optional[np.ndarray] = None,
+        ind_x: Optional[np.ndarray] = None,
+        y: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        r"""
+        Return the scaled parameter of the NB for every cell in queried cell types.
+
+        Parameters
+        ----------
+        x
+            gene expression data
+        ind_x
+            indices
+        y
+            cell types
+        Returns
+        -------
+        gene_expression
+        """
+        if self.is_trained_ is False:
+            raise RuntimeError("Please train the model first.")
+
+        dl = DataLoader(TensorDataset(torch.tensor(x, dtype=torch.float32), 
+                    torch.tensor(ind_x, dtype=torch.long), 
+                    torch.tensor(y, dtype=torch.long)), batch_size=128) # create your dataloader
+
+        scale = []
+        for tensors in dl:
+            px_scale = self.module.get_ct_specific_expression(tensors[0].cuda(), tensors[1].cuda(), tensors[2].cuda())
+            scale += [px_scale.cpu()]
+        return np.array(torch.cat(scale))
 
     def train(
         self,

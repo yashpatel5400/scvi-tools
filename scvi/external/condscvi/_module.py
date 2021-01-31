@@ -83,11 +83,16 @@ class VAEC(BaseModuleClass):
         gene_likelihood: str = "nb",
         latent_distribution: str = "normal",
         deeply_inject_covariates: bool = True,
+        iwae:bool = False,
+        link_var_encoder: Literal["exp", "softplus"] = "exp",
         **model_kwargs,
     ):
         super().__init__()
         self.dispersion = dispersion
         self.n_latent = n_latent
+        self.iwae = iwae
+        self.n_layers = n_layers
+        self.n_hidden = n_hidden
         self.log_variational = log_variational
         self.gene_likelihood = gene_likelihood
         # Automatically deactivate if useless
@@ -99,7 +104,7 @@ class VAEC(BaseModuleClass):
         self.px_r = torch.nn.Parameter(torch.randn(n_input))
 
         # z encoder goes from the n_input-dimensional data to an n_latent-d
-        self.z_encoder = Encoder(
+        self.z_encoder = Encoder(   
             n_input,
             n_latent,
             n_cat_list=[n_labels],
@@ -110,6 +115,7 @@ class VAEC(BaseModuleClass):
             inject_covariates=True,
             use_batch_norm=False,
             use_layer_norm=True,
+            link_var=link_var_encoder,
         )
 
         # decoder goes from n_latent-dimensional space to n_input-d data
@@ -208,6 +214,7 @@ class VAEC(BaseModuleClass):
         y = tensors[_CONSTANTS.LABELS_KEY]
         qz_m = inference_outputs["qz_m"]
         qz_v = inference_outputs["qz_v"]
+        library = inference_outputs["library"]
         px_rate = generative_outputs["px_rate"]
         px_r = generative_outputs["px_r"]
 
@@ -220,8 +227,45 @@ class VAEC(BaseModuleClass):
 
         reconst_loss = -NegativeBinomial(px_rate, logits=px_r).log_prob(x).sum(-1)
         scaling_factor = self.ct_weight[y.long()[:, 0]]
-        loss = torch.mean(scaling_factor * (reconst_loss + kl_weight * kl_divergence_z))
 
+        if not self.iwae:
+            loss = torch.mean(scaling_factor * (reconst_loss + kl_weight * kl_divergence_z))
+        else:
+            # hacky way, reperform a round of inference / generative
+            n_samples = 10
+            b = qz_m.size(0)
+            d = qz_m.size(1)
+            l = library.size(1)
+            g = x.size(1)
+            qz_m = qz_m.unsqueeze(0).expand((n_samples, b, d))
+            qz_v = qz_v.unsqueeze(0).expand((n_samples, b, d))
+            z = Normal(qz_m, qz_v.sqrt()).rsample()
+            library = library.unsqueeze(0).expand(
+                (n_samples, b, l)
+            )
+            y = y.unsqueeze(0).expand((n_samples, b, l))
+            x = x.unsqueeze(0).expand((n_samples, b, g))
+
+            # now reshape to get into generative 
+            qz_m = qz_m.reshape((n_samples * b, d))
+            qz_v = qz_v.reshape((n_samples * b, d))
+            x = x.reshape((n_samples * b, g))
+            z = z.reshape((n_samples * b, d))
+            library = library.reshape((n_samples * b, l))
+            y = y.reshape((n_samples * b, l))
+            # get nb mean and reconstruction
+            px_rate = self.generative(z, library, y)["px_rate"]
+            log_px_z = NegativeBinomial(px_rate, logits=px_r).log_prob(x).sum(-1).reshape((b, n_samples))
+
+            # get other log probs
+            mean = torch.zeros_like(qz_m)
+            scale = torch.ones_like(qz_v)
+            log_pz = Normal(mean, scale).log_prob(z).sum(-1).reshape((b, n_samples))
+            log_qz_x = Normal(qz_m, qz_v.sqrt()).log_prob(z).sum(-1).reshape((b, n_samples))
+
+            log_weight = log_px_z + kl_weight * (log_pz - log_qz_x)
+            iwelbo = torch.logsumexp(log_weight, 1) - np.log(n_samples)
+            loss = -torch.mean(scaling_factor * iwelbo)
         return LossRecorder(loss, reconst_loss, kl_divergence_z, 0.0)
 
     @torch.no_grad()

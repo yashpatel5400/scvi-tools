@@ -1,5 +1,7 @@
 import collections
 from typing import Iterable, List
+from scvi._compat import Literal
+
 
 import torch
 from torch import nn as nn
@@ -236,6 +238,7 @@ class Encoder(nn.Module):
         n_hidden: int = 128,
         dropout_rate: float = 0.1,
         distribution: str = "normal",
+        link_var: Literal["exp", "softplus"]= "exp",
         **kwargs,
     ):
         super().__init__()
@@ -252,7 +255,7 @@ class Encoder(nn.Module):
         )
         self.mean_encoder = nn.Linear(n_hidden, n_output)
         self.var_encoder = nn.Linear(n_hidden, n_output)
-
+        self.link_var = link_var
         if distribution == "ln":
             self.z_transformation = nn.Softmax(dim=-1)
         else:
@@ -282,7 +285,10 @@ class Encoder(nn.Module):
         # Parameters for latent distribution
         q = self.encoder(x, *cat_list)
         q_m = self.mean_encoder(q)
-        q_v = torch.exp(self.var_encoder(q)) + 1e-4
+        if self.link_var == "exp":
+            q_v = torch.exp(self.var_encoder(q)) + 1e-4
+        elif self.link_var == "softplus": 
+            q_v = torch.nn.functional.softplus(self.var_encoder(q)) + 1e-4
         latent = self.z_transformation(reparameterize_gaussian(q_m, q_v))
         return q_m, q_v, latent
 

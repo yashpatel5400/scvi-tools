@@ -51,7 +51,9 @@ class RNADeconv(BaseModuleClass):
     @torch.no_grad()
     def get_params(self) -> Tuple[np.ndarray]:
         """
-        Returns the parameters for feeding into the spatial data
+        Returns the parameters for feeding into the spatial data.
+
+        Returns
         -------
         type
             list of tensor
@@ -173,6 +175,28 @@ class SpatialDeconv(BaseModuleClass):
         res = res / res.sum(axis=1).reshape(-1, 1)
         return res
 
+    @auto_move_data
+    def get_ct_specific_expression(self, x, ind_x, y):
+        """
+        Returns cell type specific gene expression at the queried spots.
+
+        Parameters
+        ----------
+        x
+            data
+        ind_x
+            indices
+        y
+            cell types
+        """
+       # cell-type specific gene expression. Conceptually of shape (minibatch, celltype, gene). 
+        # But in this case, it's the same for all spots with the same cell type
+        beta = torch.nn.functional.softplus(self.beta) # n_genes
+        w = torch.nn.functional.softplus(self.W) # n_genes, n_spots
+        px_ct = torch.exp(self.px_o).unsqueeze(1) * beta.unsqueeze(1) * w 
+        return px_ct[:, y.long()[:, 0]].T # shape (minibatch, genes)
+
+
     def _get_inference_input(self, tensors):
         # we perform MAP here, so there is nothing to infer
         return {}
@@ -191,7 +215,6 @@ class SpatialDeconv(BaseModuleClass):
     @auto_move_data
     def generative(self, x, ind_x):
         """Build the deconvolution model for every cell in the minibatch."""
-
         beta = torch.nn.functional.softplus(self.beta)  # n_genes
         v = torch.nn.functional.softplus(self.V)  # n_labels + 1, n_spots
         w = torch.nn.functional.softplus(self.W)  # n_genes, n_labels
