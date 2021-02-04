@@ -45,11 +45,6 @@ class CondSCVI(RNASeqMixin, VAEMixin, BaseModelClass):
         * ``'nb'`` - Negative binomial distribution
         * ``'zinb'`` - Zero-inflated negative binomial distribution
         * ``'poisson'`` - Poisson distribution
-    latent_distribution
-        One of:
-
-        * ``'normal'`` - Normal distribution
-        * ``'ln'`` - Logistic normal distribution (Normal(0, I) transformed by softmax)
     use_gpu
         Use the GPU or not.
     **model_kwargs
@@ -73,7 +68,6 @@ class CondSCVI(RNASeqMixin, VAEMixin, BaseModelClass):
         dropout_rate: float = 0.1,
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene",
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "nb",
-        latent_distribution: str = "normal",
         use_gpu: bool = True,
         **module_kwargs,
     ):
@@ -89,12 +83,11 @@ class CondSCVI(RNASeqMixin, VAEMixin, BaseModelClass):
             dropout_rate=dropout_rate,
             dispersion=dispersion,
             gene_likelihood=gene_likelihood,
-            latent_distribution=latent_distribution,
             **module_kwargs,
         )
         self._model_summary_string = (
             "Conditional SCVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
-            "{}, dispersion: {}, gene_likelihood: {}, latent_distribution: {}"
+            "{}, dispersion: {}, gene_likelihood: {}"
         ).format(
             n_hidden,
             n_latent,
@@ -102,7 +95,6 @@ class CondSCVI(RNASeqMixin, VAEMixin, BaseModelClass):
             dropout_rate,
             dispersion,
             gene_likelihood,
-            latent_distribution,
         )
         self.init_params_ = self._get_init_params(locals())
 
@@ -118,49 +110,55 @@ class CondSCVI(RNASeqMixin, VAEMixin, BaseModelClass):
     def get_vamp_prior(
         self,
         adata: Optional[AnnData] = None,
-        indices: Optional[Sequence[int]] = None,
-        batch_size: Optional[int] = None,
+        p: int=50,
     ) -> np.ndarray:
         r"""
-        Return the latent representation for each cell.
-
-        This is denoted as :math:`z_n` in our manuscripts.
+        Return an empirical prior over the cell-type specific latent space (vamp prior) that may be used for deconvolution.
 
         Parameters
         ----------
         adata
             AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
             AnnData object used to initialize the model.
-        indices
-            Indices of cells in adata to use. If `None`, all cells are used.
-        give_mean
-            Give mean of distribution or sample from it.
-        mc_samples
-            For distributions with no closed-form mean (e.g., `logistic normal`), how many Monte Carlo
-            samples to take for computing mean.
-        batch_size
-            Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
+        p
+            number of components in the mixture model underlying the prior
 
         Returns
         -------
-        latent_representation : np.ndarray
-            Low-dimensional representation for each cell
+        mean_vprior: np.ndarray
+            (n_labels, p, D) array
+        var_vprior 
+            (n_labels, p, 3) array
         """
         if self.is_trained_ is False:
             raise RuntimeError("Please train the model first.")
 
         adata = self._validate_anndata(adata)
-        scdl = self._make_scvi_dl(adata=adata, indices=indices, batch_size=batch_size)
-        mean = []
-        var = []
-        for tensors in scdl:
-            x = tensors[_CONSTANTS.X_KEY]
-            y = tensors[_CONSTANTS.LABELS_KEY]
-            out = self.module.inference(x, y)
-            mean_, var_  = out["qz_m"], out["qz_v"]
-            mean += [mean_.cpu()]
-            var += [var_.cpu()]
-        return np.array(torch.cat(mean)), np.array(torch.cat(var))
+
+        mean_vprior = np.zeros((self.summary_stats["n_labels"], p, self.module.n_latent))
+        var_vprior = np.zeros((self.summary_stats["n_labels"], p, self.module.n_latent))
+        key = adata.uns["_scvi"]["categorical_mappings"]["_scvi_labels"]["original_key"]
+        mapping = adata.uns["_scvi"]["categorical_mappings"]["_scvi_labels"]["mapping"]
+        for ct in range(self.summary_stats["n_labels"]):
+            # pick p cells
+            local_indices = np.random.choice(np.where(adata.obs[key] == mapping[ct])[0], p)
+            # get mean and variance from posterior
+            scdl = self._make_scvi_dl(adata=adata, indices=local_indices, batch_size=p)
+            mean = []
+            var = []
+            for tensors in scdl:
+                x = tensors[_CONSTANTS.X_KEY]
+                y = tensors[_CONSTANTS.LABELS_KEY]
+                out = self.module.inference(x, y)
+                mean_, var_  = out["qz_m"], out["qz_v"]
+                mean += [mean_.cpu()]
+                var += [var_.cpu()]
+
+            mean_vprior[ct], var_vprior[ct] = np.array(torch.cat(mean)), np.array(torch.cat(var))
+
+        return mean_vprior, var_vprior
+
+
 
     @torch.no_grad()
     def generate_from_latent(

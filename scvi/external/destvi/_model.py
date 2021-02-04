@@ -53,7 +53,6 @@ class DestVI(BaseModelClass):
         n_hidden: int,
         amortized: bool = False,
         use_gpu: bool = True,
-        latent_distribution: str = "normal",
         **module_kwargs,
     ):
         st_adata.obs["_indices"] = np.arange(st_adata.n_obs)
@@ -67,7 +66,6 @@ class DestVI(BaseModelClass):
             n_latent=n_latent,
             n_layers=n_layers,
             n_hidden=n_hidden,
-            latent_distribution=latent_distribution,
             **module_kwargs,
         )
         self.cell_type_mapping = cell_type_mapping
@@ -108,7 +106,6 @@ class DestVI(BaseModelClass):
             sc_model.module.n_latent,
             sc_model.module.n_layers,
             sc_model.module.n_hidden,
-            latent_distribution=sc_model.module.latent_distribution,
             use_gpu=use_gpu,
             **model_kwargs,
         )
@@ -122,7 +119,7 @@ class DestVI(BaseModelClass):
     def _data_loader_cls(self):
         return AnnDataLoader
 
-    def get_proportions(self, keep_noise=False) -> np.ndarray:
+    def get_proportions(self, dataset=None, keep_noise=False) -> np.ndarray:
         """
         Returns the estimated cell type proportion for the spatial data.
 
@@ -136,14 +133,38 @@ class DestVI(BaseModelClass):
         column_names = self.cell_type_mapping
         if keep_noise:
             column_names = np.append(column_names, "noise_term")
+
+        if self.module.amortization in ["both", "proportion"]:
+            dl = DataLoader(TensorDataset(torch.tensor(dataset.X, dtype=torch.float32)), batch_size=128) # create your dataloader
+            prop_ = []
+            for tensors in dl:
+                prop_local = self.module.get_proportions(x=tensors[0])
+                prop_ += [prop_local.cpu()]
+            data = np.array(torch.cat(prop_))
+        else:
+            data = self.module.get_proportions(keep_noise=keep_noise)
         return pd.DataFrame(
-            data=self.module.get_proportions(keep_noise),
+            data=data,
             columns=column_names,
             index=self.adata.obs.index,
         )
 
-        #TODO: Get the gamma variables as well and fix format
-        #TODO: Get variables for amortized versions as well
+    def get_gamma(self, dataset=None) -> np.ndarray:
+        """
+        Returns the estimated cell-type specific latent space for the spatial data.
+
+        Shape is n_cells x n_latent x n_labels.
+        """
+        if self.module.amortization in ["both", "latent"]:
+            dl = DataLoader(TensorDataset(torch.tensor(dataset.X, dtype=torch.float32)), batch_size=128) # create your dataloader
+            gamma_ = []
+            for tensors in dl:
+                gamma_local = self.module.get_gamma(x=tensors[0])
+                gamma_ += [gamma_local.cpu()]
+            data = np.array(torch.cat(gamma_, dim=-1))
+        else:
+            data = self.module.get_gamma()
+        return np.transpose(data, (2, 0, 1))
 
     @torch.no_grad()
     def get_scale_for_ct(

@@ -216,7 +216,7 @@ class SpatialStereoscope(BaseModelClass):
             **model_kwargs,
         )
 
-    def get_proportions(self, keep_noise=False) -> np.ndarray:
+    def get_proportions(self, dataset=None, keep_noise=False) -> np.ndarray:
         """
         Returns the estimated cell type proportion for the spatial data.
         

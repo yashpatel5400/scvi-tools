@@ -3,6 +3,7 @@ import numpy as np
 import torch
 
 from scvi import _CONSTANTS
+from scvi._compat import Literal
 from scvi.compose import (
     BaseModuleClass,
     FCLayers,
@@ -38,9 +39,9 @@ class HSTDeconv(BaseModuleClass):
         n_layers: int,
         n_latent: int,
         n_genes: int,
-        latent_distribution: str = "normal",
         mean_vprior=None,
-        var_vprior=None
+        var_vprior=None,
+        amortization: Literal["none", "latent", "proportion", "both"]="none",
     ):
         super().__init__()
         self.n_spots = n_spots
@@ -48,6 +49,7 @@ class HSTDeconv(BaseModuleClass):
         self.n_hidden = n_hidden
         self.n_latent = n_latent
         self.n_genes = n_genes
+        self.amortization = amortization
         # unpack and copy parameters
         self.decoder = FCLayers(
             n_in=n_latent,
@@ -77,10 +79,6 @@ class HSTDeconv(BaseModuleClass):
 
         # within cell_type factor loadings
         self.gamma = torch.nn.Parameter(torch.randn(n_latent, self.n_labels, self.n_spots))
-        if latent_distribution == "ln":
-            self.gamma_transformation = torch.nn.Softmax(dim=-1)
-        else:
-            self.gamma_transformation = identity
 
         if mean_vprior is not None:
             print("USING VAMP PRIOR")
@@ -95,13 +93,37 @@ class HSTDeconv(BaseModuleClass):
         # additive gene bias
         self.beta = torch.nn.Parameter(0.01 * torch.randn(self.n_genes))
 
+        # create additional neural nets for amortization
+        # within cell_type factor loadings
+        self.gamma_encoder= torch.nn.Sequential(
+            FCLayers(
+            n_in=self.n_genes,
+            n_out=n_hidden,
+            n_cat_list=[],
+            n_layers=2,
+            n_hidden=n_hidden,
+            dropout_rate=0.1,
+                    ),torch.nn.Linear(n_hidden, n_latent * n_labels))
+        # cell type loadings
+        self.V_encoder = FCLayers(
+            n_in=self.n_genes,
+            n_out=self.n_labels + 1,
+            n_layers=2,
+            n_hidden=n_hidden,
+            dropout_rate=0.1,
+        )
+
     @torch.no_grad()
-    def get_proportions(self, keep_noise=False) -> np.ndarray:
+    @auto_move_data
+    def get_proportions(self, x=None, keep_noise=False) -> np.ndarray:
         """Returns the loadings."""
-        # get estimated unadjusted proportions
-        res = (
-            torch.nn.functional.softplus(self.V).cpu().numpy().T
-        )  # n_spots, n_labels + 1
+        if self.amortization in ["both", "proportion"]:
+            # get estimated unadjusted proportions
+            res = torch.nn.functional.softplus(self.V_encoder(x))
+        else:
+            res = (
+                torch.nn.functional.softplus(self.V).cpu().numpy().T
+            )  # n_spots, n_labels + 1
         # remove dummy cell type proportion values
         if not keep_noise:
             res = res[:, :-1]
@@ -110,7 +132,8 @@ class HSTDeconv(BaseModuleClass):
         return res
 
     @torch.no_grad()
-    def get_gamma(self) -> torch.Tensor:
+    @auto_move_data
+    def get_gamma(self, x=None) -> torch.Tensor:
         """
         Returns the loadings.
 
@@ -120,11 +143,14 @@ class HSTDeconv(BaseModuleClass):
             tensor
         """
         # get estimated unadjusted proportions
-        gamma = self.gamma_transformation(self.gamma)
-        return np.transpose(gamma.cpu().numpy(), axes=(2, 0, 1))  # (n_latent, n_labels, n_spots)
+        if self.amortization in ["latent", "both"]:
+            gamma =  self.gamma_encoder(x)
+            return torch.transpose(gamma, 0, 1).reshape((self.n_latent, self.n_labels, -1)) # n_latent, n_labels, minibatch
+        else:
+            return self.gamma.cpu().numpy()  # (n_latent, n_labels, n_spots)
 
     @auto_move_data
-    def get_ct_specific_expression(self, x, ind_x, y):
+    def get_ct_specific_expression(self, x=None, ind_x=None, y=None):
         """
         Returns cell type specific gene expression at the queried spots.
 
@@ -137,11 +163,17 @@ class HSTDeconv(BaseModuleClass):
         y
             cell types
         """
-        # cell-type specific gene expression. Conceptually of shape (minibatch, celltype, gene). 
-        # But in this case, it's the same for all spots with the same cell type
+        # cell-type specific gene expression, shape (minibatch, celltype, gene). 
         beta = torch.nn.functional.softplus(self.beta) # n_genes
-        gamma = self.gamma_transformation(self.gamma)
-        gamma_ind = gamma[:, :, ind_x[:, 0]] # n_latent, n_labels, minibatch_size
+
+        # obtain the relevant gammas
+        if self.amortization in ["both", "latent"]:
+            x_ = torch.log(1 + x)
+            gamma_ind = torch.transpose(self.gamma_encoder(x_), 0, 1).reshape((self.n_latent, self.n_labels, -1))
+        else:
+            gamma_ind = self.gamma[:, :, ind_x[:, 0]] # n_latent, n_labels, minibatch_size
+
+        # calculate cell type specific expression
         gamma_select = gamma_ind[:, y[:, 0], torch.arange(ind_x.shape[0])].T # minibatch_size, n_latent
         h = self.decoder(gamma_select, y)
         px_scale = self.px_decoder(h) # (minibatch, n_genes) 
@@ -170,17 +202,24 @@ class HSTDeconv(BaseModuleClass):
         library = torch.sum(x, dim=1, keepdim=True)
         # setup all non-linearities
         beta = torch.nn.functional.softplus(self.beta)  # n_genes
-        v = torch.nn.functional.softplus(self.V)  # n_labels + 1, n_spots
         eps = torch.nn.functional.softplus(self.eta)  # n_genes
-
+        x_ = torch.log(1 + x)
         # subsample parameters
-        v_ind = v[:, ind_x[:, 0]].T # minibatch_size, labels + 1
-        gamma_ind = self.gamma[:, :, ind_x[:, 0]] # n_latent, n_labels, minibatch_size
+
+        if self.amortization in ["both", "latent"]:
+            gamma_ind = torch.transpose(self.gamma_encoder(x_), 0, 1).reshape((self.n_latent, self.n_labels, -1))
+        else:
+            gamma_ind = self.gamma[:, :, ind_x[:, 0]] # n_latent, n_labels, minibatch_size
+
+        if self.amortization in ["both", "proportion"]:
+            v_ind = self.V_encoder(x_)
+        else:
+            v_ind = self.V[:, ind_x[:, 0]].T # minibatch_size, labels + 1
+        v_ind = torch.nn.functional.softplus(v_ind)
 
         # reshape and get gene expression value for all minibatch
         gamma_ind = torch.transpose(gamma_ind, 2, 0) # minibatch_size, n_labels, n_latent
-        gamma_trans = self.gamma_transformation(gamma_ind)
-        gamma_reshape = gamma_trans.reshape((-1, self.n_latent)) # minibatch_size * n_labels, n_latent
+        gamma_reshape = gamma_ind.reshape((-1, self.n_latent)) # minibatch_size * n_labels, n_latent
         enum_label = torch.arange(0, self.n_labels).repeat((M)).view((-1, 1)) # minibatch_size * n_labels, 1
         h = self.decoder(gamma_reshape, enum_label.cuda())
         px_rate = self.px_decoder(h).reshape((M, self.n_labels, -1)) # (minibatch, n_labels, n_genes) 
@@ -216,7 +255,7 @@ class HSTDeconv(BaseModuleClass):
         scale = torch.ones_like(self.eta)
         glo_neg_log_likelihood_prior = -Normal(mean, scale).log_prob(self.eta).sum()
         # TODO: make this an option?
-        glo_neg_log_likelihood_prior += torch.var(self.beta)
+        # glo_neg_log_likelihood_prior += torch.var(self.beta)
 
         # gamma prir likelihood
         if self.mean_vprior is None:

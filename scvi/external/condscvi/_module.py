@@ -57,12 +57,6 @@ class VAEC(BaseModuleClass):
         * ``'nb'`` - Negative binomial distribution
         * ``'zinb'`` - Zero-inflated negative binomial distribution
         * ``'poisson'`` - Poisson distribution
-    latent_distribution
-        Ignored so far -> 
-        One of
-
-        * ``'normal'`` - Isotropic normal
-        * ``'ln'`` - Logistic normal with normal params N(0, 1)
     deeply_inject_covariates
         Ignored so far -> 
         Whether to concatenate covariates into output of hidden layers in encoder/decoder. This option
@@ -81,7 +75,6 @@ class VAEC(BaseModuleClass):
         dispersion: str = "gene",
         log_variational: bool = True,
         gene_likelihood: str = "nb",
-        latent_distribution: str = "normal",
         deeply_inject_covariates: bool = True,
         iwae:bool = False,
         link_var_encoder: Literal["exp", "softplus"] = "exp",
@@ -95,10 +88,10 @@ class VAEC(BaseModuleClass):
         self.n_hidden = n_hidden
         self.log_variational = log_variational
         self.gene_likelihood = gene_likelihood
+        self.latent_distribution = "normal"
         # Automatically deactivate if useless
         self.n_batch = n_batch
         self.n_labels = n_labels
-        self.latent_distribution = latent_distribution
 
         # gene dispersion
         self.px_r = torch.nn.Parameter(torch.randn(n_input))
@@ -111,7 +104,6 @@ class VAEC(BaseModuleClass):
             n_layers=n_layers,
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
-            distribution=latent_distribution,
             inject_covariates=True,
             use_batch_norm=False,
             use_layer_norm=True,
