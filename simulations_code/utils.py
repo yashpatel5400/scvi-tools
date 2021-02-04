@@ -63,3 +63,16 @@ def find_location_index_cell_type(locations, cell_type, loc_ref, ct_ref):
                     out_a += [i]
                     out_b += [j]
     return np.array(out_a[1:]), np.array(out_b[1:])
+
+@jit(nopython=True)
+def discrete_histogram(data, size):
+    """
+    Fast histogram in jit, looking at cell type abundance.
+
+    data of shape (n_cells, n_neighbors), must be an integer
+    """
+    res = np.zeros((data.shape[0], size))
+    for n in range(data.shape[0]):
+        for k in range(data.shape[1]):
+            res[n, data[n, k]] += 1
+    return res / data.shape[1]

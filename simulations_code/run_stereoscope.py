@@ -40,7 +40,7 @@ def main(input_dir, output_suffix, index_key, sc_epochs, st_epochs):
     logger.info(F"Running Stereoscope on key: {key}")
 
     # path management
-    output_dir = input_dir + output_suffix + key + '/'
+    output_dir = input_dir + output_suffix + str(index_key) + '/'
 
     if not os.path.isdir(output_dir):
         logger.info("Directory doesn't exist, creating it")

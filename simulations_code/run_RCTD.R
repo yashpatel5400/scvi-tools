@@ -9,7 +9,7 @@ args = commandArgs(trailingOnly=TRUE)
 # path out
 path_in <- args[1] 
 dir_out <- args[2]
-id_clustering = args[3]
+index_key = args[3]
 
 path_sc <- paste(path_in, "/sc_simu.h5ad", sep="")
 path_st = paste(path_in, "/st_simu.h5ad", sep="")
@@ -47,8 +47,11 @@ data = transpose_dgRMatrix(adata$X)
 colnames(data) <- rownames(adata$obs)
 rownames(data) <- rownames(adata$var)
 single_cell <- CreateSeuratObject(counts = data)
+key = adata$uns["key_clustering"][as.integer(index_key) + 1]
+print(paste("Running Stereoscope on key:", key))
+
 # add cell types
-meta = adata$obs$cell_type
+meta = adata$obs[[key]]
 single_cell <- AddMetaData(
   object = single_cell,
   metadata = meta,
