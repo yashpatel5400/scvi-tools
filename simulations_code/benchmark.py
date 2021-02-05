@@ -11,7 +11,6 @@ Created on 2020/02/03
 import os
 import click
 import numpy as np
-from logzero import logger
 
 from utils import get_mean_normal, find_location_index_cell_type, metrics_vector, discrete_histogram
 import scanpy as sc
@@ -24,6 +23,10 @@ import scvi
 from scvi.external import DestVI, SpatialStereoscope
 
 from sklearn.neighbors import KDTree
+
+import logging
+logger = logging.getLogger(__name__)
+
 
 PCA_path = "/home/ubuntu/simulation_LN/grtruth_PCA.npz"
 

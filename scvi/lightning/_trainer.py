@@ -69,6 +69,8 @@ class Trainer(pl.Trainer):
         early_stopping_min_delta: float = 0.00,
         early_stopping_patience: int = 45,
         early_stopping_mode: Literal["min", "max"] = "min",
+        progress_bar_refresh_rate: int = 1,
+        simple_progress_bar: bool = True,
         logger: Union[Optional[LightningLoggerBase], bool] = None,
         **kwargs
     ):
@@ -93,9 +95,9 @@ class Trainer(pl.Trainer):
                 if check_val_every_n_epoch is not None
                 else np.inf
             )
-
-        bar = ProgressBar()
-        kwargs["callbacks"] += [bar]
+        if simple_progress_bar:
+            bar = ProgressBar(refresh_rate=progress_bar_refresh_rate)
+            kwargs["callbacks"] += [bar]	           
 
         if logger is None:
             logger = SimpleLogger()
@@ -110,6 +112,7 @@ class Trainer(pl.Trainer):
             checkpoint_callback=checkpoint_callback,
             num_sanity_val_steps=num_sanity_val_steps,
             weights_summary=weights_summary,
+            progress_bar_refresh_rate=progress_bar_refresh_rate,
             logger=logger,
             **kwargs,
         )

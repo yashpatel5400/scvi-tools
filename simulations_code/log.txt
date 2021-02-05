@@ -1,0 +1,6 @@
+INFO     No batch_key inputted, assuming all cells are same batch                                                                                                                                          
+INFO     Using labels from adata.obs["cell_type"]                                                                                                                                                          
+INFO     Using data from adata.X                                                                                                                                                                           
+INFO     Computing library size prior per batch                                                                                                                                                            
+INFO     Successfully registered anndata object containing 32000 cells, 2000 vars, 1 batches, 5 labels, and 0 proteins. Also registered 0 extra categorical covariates and 0 extra continuous covariates.  
+INFO     Please do not further modify adata until model is trained.                                                                                                                                        

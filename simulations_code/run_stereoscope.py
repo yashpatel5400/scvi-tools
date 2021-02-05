@@ -11,8 +11,6 @@ Created on 2020/02/03
 import os
 import click
 import numpy as np
-from logzero import logger
-
 import scanpy as sc
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -20,7 +18,11 @@ import pandas as pd
 import anndata
 
 import scvi
+scvi.settings.reset_logging_handler()
 from scvi.external import RNAStereoscope, SpatialStereoscope
+
+import logging
+logger = logging.getLogger("scvi")
 
 @click.command()
 @click.option('--input-dir', type=click.STRING, default="out/", help='input gene expression directory')
@@ -55,7 +57,7 @@ def main(input_dir, output_suffix, index_key, sc_epochs, st_epochs):
 
     # train sc-model
     sc_stereo = RNAStereoscope(sc_adata, )
-    sc_stereo.train(lr=0.01, max_epochs=sc_epochs)
+    sc_stereo.train(lr=0.01, max_epochs=sc_epochs, progress_bar_refresh_rate=0)
 
     plt.plot(sc_stereo.history["elbo_train"][2:], label="train")
     plt.title("loss over training epochs")
@@ -67,7 +69,7 @@ def main(input_dir, output_suffix, index_key, sc_epochs, st_epochs):
     scvi.data.setup_anndata(st_adata)
 
     st_stereo = SpatialStereoscope.from_rna_model(st_adata, sc_stereo)
-    st_stereo.train(max_epochs=st_epochs)
+    st_stereo.train(max_epochs=st_epochs, progress_bar_refresh_rate=0)
     plt.plot(st_stereo.history["elbo_train"][150:], label = "train")
     plt.title("loss over training epochs")
     plt.legend()

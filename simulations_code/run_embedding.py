@@ -11,7 +11,6 @@ Created on 2020/02/03
 import os
 import click
 import numpy as np
-from logzero import logger
 
 import scanpy as sc
 import matplotlib.pyplot as plt
@@ -23,6 +22,10 @@ import harmonypy as hm
 from sklearn.decomposition import PCA
 import scanorama
 import scvi
+
+import logging
+logger = logging.getLogger(__name__)
+
 
 @click.command()
 @click.option('--input-dir', type=click.STRING, default="out/", help='input gene expression directory')

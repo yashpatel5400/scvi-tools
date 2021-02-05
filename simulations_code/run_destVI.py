@@ -11,7 +11,6 @@ Created on 2020/02/03
 import os
 import click
 import numpy as np
-from logzero import logger
 
 import scanpy as sc
 import matplotlib.pyplot as plt
@@ -20,7 +19,11 @@ import pandas as pd
 import anndata
 
 import scvi
+scvi.settings.reset_logging_handler()
 from scvi.external import CondSCVI, DestVI
+
+import logging
+logger = logging.getLogger("scvi")
 
 @click.command()
 @click.option('--input-dir', type=click.STRING, default="out/", help='input gene expression directory')
@@ -52,7 +55,7 @@ def main(input_dir, output_suffix, sc_epochs, st_epochs):
 
     # train sc-model
     sc_model = CondSCVI(sc_adata, n_latent=4, n_layers=2, n_hidden=128)
-    sc_model.train(max_epochs=sc_epochs, plan_kwargs={"n_epochs_kl_warmup":2})
+    sc_model.train(max_epochs=sc_epochs, plan_kwargs={"n_epochs_kl_warmup":2}, progress_bar_refresh_rate=0)
     plt.plot(sc_model.history["elbo_train"], label="train")
     plt.title("ELBO on train set over training epochs")
     plt.legend()
@@ -68,7 +71,7 @@ def main(input_dir, output_suffix, sc_epochs, st_epochs):
     spatial_model = DestVI.from_rna_model(st_adata, sc_model, 
                                         mean_vprior=mean_vprior, var_vprior=mult_*var_vprior,
                                         amortization="latent")
-    spatial_model.train(max_epochs=st_epochs, train_size=1, plan_kwargs={"lr":0.001})
+    spatial_model.train(max_epochs=st_epochs, train_size=1, plan_kwargs={"lr":0.001}, progress_bar_refresh_rate=0)
 
     plt.plot(spatial_model.history["elbo_train"][150:], label="train")
     plt.title("ELBO train over training epochs")
