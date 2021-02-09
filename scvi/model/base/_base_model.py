@@ -314,6 +314,7 @@ class BaseModelClass(ABC):
         self.validation_indices_ = val_dl.indices
 
         self._set_training_plan(plan_class, plan_kwargs)
+        self._trainer_tuning(kwargs, train_dl, val_dl)
 
         if train_size == 1.0:
             # circumvent the empty data loader problem if all dataset used for training
@@ -328,6 +329,12 @@ class BaseModelClass(ABC):
         if use_gpu:
             self.module.cuda()
         self.is_trained_ = True
+
+    def _trainer_tuning(self, trainer_kwargs, train_dl, val_dl):
+        kw = "auto_lr_find"
+        if kw in trainer_kwargs.keys():
+            if trainer_kwargs[kw] is not False:
+                self.trainer.tune(self._training_plan, train_dl)
 
     def _set_training_plan(self, plan_class, plan_kwargs):
         """Set the _training_plan attribute."""
