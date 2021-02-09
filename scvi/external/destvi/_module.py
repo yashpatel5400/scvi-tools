@@ -255,7 +255,7 @@ class HSTDeconv(BaseModuleClass):
         scale = torch.ones_like(self.eta)
         glo_neg_log_likelihood_prior = -Normal(mean, scale).log_prob(self.eta).sum()
         # TODO: make this an option?
-        # glo_neg_log_likelihood_prior += torch.var(self.beta)
+        glo_neg_log_likelihood_prior += torch.var(self.beta)
 
         # gamma prir likelihood
         if self.mean_vprior is None:

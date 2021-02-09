@@ -23,8 +23,9 @@ from sklearn.decomposition import PCA
 import scanorama
 import scvi
 
+scvi.settings.reset_logging_handler()
 import logging
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("scvi")
 
 
 @click.command()

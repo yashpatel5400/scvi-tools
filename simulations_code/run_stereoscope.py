@@ -18,9 +18,9 @@ import pandas as pd
 import anndata
 
 import scvi
-scvi.settings.reset_logging_handler()
 from scvi.external import RNAStereoscope, SpatialStereoscope
 
+scvi.settings.reset_logging_handler()
 import logging
 logger = logging.getLogger("scvi")
 

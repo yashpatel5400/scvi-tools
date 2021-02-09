@@ -1,6 +1,8 @@
 import logging
 import torch
 from anndata import AnnData
+from scipy.sparse import csr_matrix, isspmatrix
+
 
 import numpy as np
 import pandas as pd
@@ -135,7 +137,10 @@ class DestVI(BaseModelClass):
             column_names = np.append(column_names, "noise_term")
 
         if self.module.amortization in ["both", "proportion"]:
-            dl = DataLoader(TensorDataset(torch.tensor(dataset.X, dtype=torch.float32)), batch_size=128) # create your dataloader
+            data = dataset.X
+            if isspmatrix(data):
+                data = data.A
+            dl = DataLoader(TensorDataset(torch.tensor(data, dtype=torch.float32)), batch_size=128) # create your dataloader
             prop_ = []
             for tensors in dl:
                 prop_local = self.module.get_proportions(x=tensors[0])
@@ -156,7 +161,10 @@ class DestVI(BaseModelClass):
         Shape is n_cells x n_latent x n_labels.
         """
         if self.module.amortization in ["both", "latent"]:
-            dl = DataLoader(TensorDataset(torch.tensor(dataset.X, dtype=torch.float32)), batch_size=128) # create your dataloader
+            data = dataset.X
+            if isspmatrix(data):
+                data = data.A
+            dl = DataLoader(TensorDataset(torch.tensor(data, dtype=torch.float32)), batch_size=128) # create your dataloader
             gamma_ = []
             for tensors in dl:
                 gamma_local = self.module.get_gamma(x=tensors[0])

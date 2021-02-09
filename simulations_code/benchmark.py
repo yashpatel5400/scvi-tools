@@ -24,8 +24,9 @@ from scvi.external import DestVI, SpatialStereoscope
 
 from sklearn.neighbors import KDTree
 
+scvi.settings.reset_logging_handler()
 import logging
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("scvi")
 
 
 PCA_path = "/home/ubuntu/simulation_LN/grtruth_PCA.npz"
@@ -197,7 +198,7 @@ def main(input_dir, model_subdir, model_string):
     prop_score = metrics_vector(st_adata.obsm["cell_type"], agg_prop_estimates)
     df = pd.concat([df, pd.Series(prop_score)], axis=1)
     df.columns = ["ct" + str(i) for i in range(5)]+["allct", "proportions"]    
-    print(df)
+    df.to_csv(input_dir+model_subdir + "/result.csv")
 
 
 

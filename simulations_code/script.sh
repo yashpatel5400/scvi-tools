@@ -19,11 +19,17 @@ Rscript --vanilla run_RCTD.R  /home/ubuntu/simu_runs/run_A /RCTD1/ 4
 
 
 # Step 3: eval methods
-python eval_scvi-tools_model.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir destvi --model-string DestVI
-python eval_scvi-tools_model.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir stereo0 --model-string Stereoscope0
-python eval_scvi-tools_model.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir stereo1 --model-string Stereoscope1
-python eval_scvi-tools_model.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir harmony --model-string Harmony
-python eval_scvi-tools_model.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir scanorama --model-string Scanorama
-python eval_scvi-tools_model.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir scvi --model-string scVI
-python eval_scvi-tools_model.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir RCTD0 --model-string RCTD0
-python eval_scvi-tools_model.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir RCTD1 --model-string RCTD1
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir destvi --model-string DestVI
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir stereo0 --model-string Stereoscope0
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir stereo1 --model-string Stereoscope1
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir stereo2 --model-string Stereoscope2
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir stereo3 --model-string Stereoscope3
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir stereo4 --model-string Stereoscope4
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir harmony --model-string Harmony
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir scanorama --model-string Scanorama
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir scvi --model-string scVI
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir RCTD0 --model-string RCTD0
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir RCTD1 --model-string RCTD1
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir RCTD2 --model-string RCTD2
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir RCTD3 --model-string RCTD3
+python -u benchmark.py --input-dir /home/ubuntu/simu_runs/run_A --model-subdir RCTD4 --model-string RCTD4
