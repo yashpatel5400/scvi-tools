@@ -29,7 +29,8 @@ import logging
 logger = logging.getLogger("scvi")
 
 
-PCA_path = "/home/ubuntu/simulation_LN/grtruth_PCA.npz"
+param_path = "/home/ubuntu/simulation_LN/fixed_data/"
+PCA_path = param_path + "grtruth_PCA.npz"
 
 
 @click.command()
@@ -141,7 +142,7 @@ def main(input_dir, model_subdir, model_string):
             indices_gt = np.where(s_ct == ct)[0]
             imputed_expression[indices_gt] = normalized_expression
 
-    elif "RCTD" in model_string:
+    elif "RCTD" in model_string or "Spotlight" in model_string:
         index = int(model_string[-1])
         nb_sub_ct = st_adata.uns["target_list"][index]
         key_clustering = st_adata.uns["key_clustering"][index]
@@ -161,8 +162,12 @@ def main(input_dir, model_subdir, model_string):
             n_indices = indices.shape[0]
             if nb_sub_ct > 1:
                 # hierarchical clusters
-                partial_cell_type = proportions[indices, nb_sub_ct*ct:nb_sub_ct*ct+nb_sub_ct] 
-                partial_cell_type /= np.sum(partial_cell_type, axis=1)[:, np.newaxis] # shape (cells, nb_sub_ct)
+                partial_cell_type = proportions[indices, nb_sub_ct*ct:nb_sub_ct*ct+nb_sub_ct]
+                total_partial = np.sum(partial_cell_type, axis=1)
+                # sometimes it is not affected to any cell type -> just mix them
+                partial_cell_type[total_partial == 0] = 1
+                total_partial[total_partial == 0] = C
+                partial_cell_type /= total_partial[:, np.newaxis] # shape (cells, nb_sub_ct)
                 # impute for all sub-cell types
                 expression = np.zeros(shape=(n_indices, imputed_expression.shape[1]))
                 for t in range(nb_sub_ct):

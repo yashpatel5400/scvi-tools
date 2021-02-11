@@ -48,7 +48,7 @@ colnames(data) <- rownames(adata$obs)
 rownames(data) <- rownames(adata$var)
 single_cell <- CreateSeuratObject(counts = data)
 key = adata$uns["key_clustering"][as.integer(index_key) + 1]
-print(paste("Running Stereoscope on key:", key))
+print(paste("Running RCTD on key:", key))
 
 # add cell types
 meta = adata$obs[[key]]

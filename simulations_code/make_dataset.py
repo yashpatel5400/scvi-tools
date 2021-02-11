@@ -25,8 +25,11 @@ import anndata
 from scipy.sparse import csr_matrix
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
+import torch
+from torch.distributions import Gamma
 
-PCA_path = "/home/ubuntu/simulation_LN/grtruth_PCA.npz"
+param_path = "/home/ubuntu/simulation_LN/fixed_data/"
+PCA_path = param_path + "grtruth_PCA.npz"
 
 @click.command()
 @click.option('--output-dir', type=click.STRING, default="out/", help='output directory')
@@ -53,6 +56,8 @@ def main(output_dir, input_file, lam_ct, temp_ct, lam_gam, sf_gam, threshold_gt)
     grtruth_PCA = np.load(input_file)
     mean_, components_ = grtruth_PCA["mean_"], grtruth_PCA["components_"]
 
+    inv_dispersion = np.exp(np.load(param_path + "log-inv-dispersion.npy"))
+
     C = components_.shape[0]
     D = components_.shape[1]
     logger.info("get spatial patterns")
@@ -66,8 +71,17 @@ def main(output_dir, input_file, lam_ct, temp_ct, lam_gam, sf_gam, threshold_gt)
     # get means of the Gaussian using the sPCA model
     mean_normal = get_mean_normal(cell_types_sc, gamma_sc, mean_, components_)
     # convert back to count distribution and sample from Poisson
-    mean_normal[mean_normal < 0] = 0
+    mean_normal[mean_normal <= 0] = np.min(mean_normal[mean_normal > 0]) * 0.01
     transformed_mean = np.expm1(mean_normal)
+
+    # TODO MAKE SURE THIS DOES OK
+    if True:
+        # Important remark: Gamma is parametrized by the rate = 1/scale!
+        gamma_s = Gamma(concentration=torch.tensor(inv_dispersion), 
+            rate=torch.tensor(inv_dispersion) / torch.tensor(transformed_mean)).sample()
+        mean_poisson = torch.clamp(gamma_s, max=1e8).cpu().numpy()
+        transformed_mean = mean_poisson
+
     samples = np.random.poisson(lam=transformed_mean)
 
     logger.info("dump scRNA-seq")
@@ -79,7 +93,7 @@ def main(output_dir, input_file, lam_ct, temp_ct, lam_gam, sf_gam, threshold_gt)
 
     logger.info("cluster cell-type-specific single-cell data (used in discrete deconvolution baselines)")
     # cluster the single-cell data using sklearn
-    target_list = [2, 4, 8, 16, 32]
+    target_list = [2, 4, 8, 16]
     key_list = ["cell_type"]
     hier_labels_sc = np.zeros((sc_anndata.n_obs, len(target_list)))
     for ct in range(5):
@@ -106,8 +120,17 @@ def main(output_dir, input_file, lam_ct, temp_ct, lam_gam, sf_gam, threshold_gt)
     sc_anndata.uns["target_list"] = [1] + target_list
     sc_anndata.write(output_dir + "sc_simu.h5ad", compression="gzip")
 
+    transformed_mean_st = transformed_mean.mean(1)
+    # TODO MAKE SURE THIS DOES OK
+    if True:
+        # Important remark: Gamma is parametrized by the rate = 1/scale!
+        gamma_st = Gamma(concentration=torch.tensor(inv_dispersion), 
+            rate=torch.tensor(inv_dispersion) / torch.tensor(transformed_mean_st)).sample()
+        mean_poisson_st = torch.clamp(gamma_st, max=1e8).cpu().numpy()
+        transformed_mean_st = mean_poisson_st
+    
     logger.info("dump spatial")
-    samples_st = np.random.poisson(lam=transformed_mean.mean(1))
+    samples_st = np.random.poisson(lam=transformed_mean_st)
     st_anndata = anndata.AnnData(X=csr_matrix(samples_st))
     st_anndata.obsm["cell_type"] = freq_sample
     st_anndata.obsm["gamma"] = gamma
