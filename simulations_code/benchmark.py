@@ -142,7 +142,7 @@ def main(input_dir, model_subdir, model_string):
             indices_gt = np.where(s_ct == ct)[0]
             imputed_expression[indices_gt] = normalized_expression
 
-    elif "RCTD" in model_string or "Spotlight" in model_string:
+    elif "RCTD" in model_string or "Spotlight" in model_string or "Seurat" in model_string:
         index = int(model_string[-1])
         nb_sub_ct = st_adata.uns["target_list"][index]
         key_clustering = st_adata.uns["key_clustering"][index]

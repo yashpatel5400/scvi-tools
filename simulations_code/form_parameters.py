@@ -17,6 +17,7 @@ from numba import jit
 import anndata
 from sklearn.decomposition import SparsePCA, NMF, PCA
 import scvi
+import torch
 scvi.settings.reset_logging_handler()
 import logging
 logger = logging.getLogger("scvi")
@@ -98,10 +99,10 @@ if __name__ == '__main__':
     nova_data = cleanup_anndata(nova_data, G=G)
     # STEP 1: learn scVI to get dispersions
     scvi.data.setup_anndata(nova_data, layer="counts")
-    model = scvi.model.CondSCVI(nova_data, n_latent=2)
+    model = scvi.model.SCVI(nova_data, n_latent=10)
     model.train(max_epochs=15)
-    dispersion = model.module.px_r.detach().cpu().numpy()
-    np.save(path+ "log-inv-dispersion.npy", dispersion)
+    dispersion = torch.exp(model.module.px_r.detach()).cpu().numpy()
+    np.save(path+ "inv-dispersion.npy", dispersion)
     # STEP 2: load Stereoscope parameters to get multiplicative factors
     # np.save(path + "beta_stereoscope.npy", spatial_model.module.beta.detach().cpu().numpy())
     # STEP 3: learn sparsePCA for intra-cell type variations

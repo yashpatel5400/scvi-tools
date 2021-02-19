@@ -30,7 +30,8 @@ logger = logging.getLogger("scvi")
 @click.option("--output-suffix", type=click.STRING, default="destvi", help="subdirectory for output saved model")
 @click.option('--sc-epochs', type=click.INT, default=15, help='Max epochs for sc-rna')
 @click.option('--st-epochs', type=click.INT, default=2000, help='Max epochs for st-rna')
-def main(input_dir, output_suffix, sc_epochs, st_epochs):
+@click.option('--amortization', type=click.STRING, default="latent", help="amortization mode for DestVI")
+def main(input_dir, output_suffix, sc_epochs, st_epochs, amortization):
     # directory management
     if input_dir[-1] != "/":
         input_dir += "/"
@@ -70,7 +71,7 @@ def main(input_dir, output_suffix, sc_epochs, st_epochs):
     mult_ = 1
     spatial_model = DestVI.from_rna_model(st_adata, sc_model, 
                                         mean_vprior=mean_vprior, var_vprior=mult_*var_vprior,
-                                        amortization="latent")
+                                        amortization=amortization)
     spatial_model.train(max_epochs=st_epochs, train_size=1, plan_kwargs={"lr":0.001}, progress_bar_refresh_rate=0)
 
     plt.plot(spatial_model.history["elbo_train"][150:], label="train")

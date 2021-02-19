@@ -11,6 +11,7 @@ Created on 2020/02/03
 import os
 import click
 import numpy as np
+np.random.seed(0)
 from logzero import logger
 
 from utils import get_mean_normal, categorical
@@ -26,6 +27,7 @@ from scipy.sparse import csr_matrix
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 import torch
+torch.manual_seed(0)
 from torch.distributions import Gamma
 
 param_path = "/home/ubuntu/simulation_LN/fixed_data/"
@@ -56,7 +58,7 @@ def main(output_dir, input_file, lam_ct, temp_ct, lam_gam, sf_gam, threshold_gt)
     grtruth_PCA = np.load(input_file)
     mean_, components_ = grtruth_PCA["mean_"], grtruth_PCA["components_"]
 
-    inv_dispersion = np.exp(np.load(param_path + "log-inv-dispersion.npy"))
+    inv_dispersion = np.load(param_path + "inv-dispersion.npy")
 
     C = components_.shape[0]
     D = components_.shape[1]
@@ -73,6 +75,11 @@ def main(output_dir, input_file, lam_ct, temp_ct, lam_gam, sf_gam, threshold_gt)
     # convert back to count distribution and sample from Poisson
     mean_normal[mean_normal <= 0] = np.min(mean_normal[mean_normal > 0]) * 0.01
     transformed_mean = np.expm1(mean_normal)
+
+    # dispersion was learned on the single-cell data. 
+    # this simulation might have different library sizes
+    # we must match them so that the dispersion estimates make sense (i.e., genes are as overpoissonian as in the experiments)
+    inv_dispersion *= 1e2
 
     # TODO MAKE SURE THIS DOES OK
     if True:

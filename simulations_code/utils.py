@@ -42,10 +42,9 @@ def metrics_vector(groundtruth, predicted, scaling=1, feature_shortlist=None):
         predicted = predicted[:, feature_shortlist]
     n = predicted.shape[0]
     g = predicted.shape[1]       
-    eta = np.random.uniform(0, 1e-10, size=(n,))
     # correlations metrics
-    res["avg_spearman"] = np.mean([spearmanr(groundtruth[:, i], predicted[:, i] + eta).correlation for i in range(g)])
-    res["avg_pearson"] = np.mean([pearsonr(groundtruth[:, i], predicted[:, i] + eta)[0] for i in range(g)])
+    res["avg_spearman"] = np.nan_to_num(np.mean([spearmanr(groundtruth[:, i], predicted[:, i] ).correlation for i in range(g)]))
+    res["avg_pearson"] = np.nan_to_num(np.mean([pearsonr(groundtruth[:, i], predicted[:, i])[0] for i in range(g)]))
     # error metrics
     res["median_l1"] = np.median(np.abs(scaling * groundtruth - scaling * predicted))
     res["mse"] = np.sqrt(np.mean((scaling * groundtruth - scaling * predicted)**2))

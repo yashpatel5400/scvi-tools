@@ -162,8 +162,8 @@ class DestVI(BaseModelClass):
         """
         if self.module.amortization in ["both", "latent"]:
             data = dataset.X
-            if isspmatrix(data):
-                data = data.A
+            if isspmatrix(dataset.X):
+                data = dataset.X.A
             dl = DataLoader(TensorDataset(torch.tensor(data, dtype=torch.float32)), batch_size=128) # create your dataloader
             gamma_ = []
             for tensors in dl:
