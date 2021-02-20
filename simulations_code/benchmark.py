@@ -64,9 +64,9 @@ def main(input_dir, model_subdir, model_string):
     s_groundtruth = np.expm1(s_groundtruth)
     s_groundtruth = s_groundtruth / np.sum(s_groundtruth, axis=1)[:, np.newaxis]
 
-    if model_string == "DestVI" or "Stereoscope" in model_string:
+    if "DestVI" in model_string or "Stereoscope" in model_string:
         # first load the model
-        if model_string == "DestVI":
+        if "DestVI" in model_string:
             spatial_model = DestVI.load(input_dir+model_subdir, st_adata)
             nb_sub_ct=1
         else:
@@ -190,21 +190,24 @@ def main(input_dir, model_subdir, model_string):
 
     # score these predictions against GT
     all_res = []
+    all_res_long = []
     for ct in range(C):
         # get local scores
         indices_gt = np.where(s_ct == ct)[0]
         # potentially filter genes for local scores only
         gene_list = np.unique(np.hstack([np.where(components_[ct, i] != 0)[0] for i in range(D)]))
         res = metrics_vector(s_groundtruth[indices_gt], imputed_expression[indices_gt], scaling=2e5, feature_shortlist=gene_list)
+        res_long = metrics_vector(s_groundtruth[indices_gt], imputed_expression[indices_gt], scaling=2e5)
         all_res.append(pd.Series(res))
+        all_res_long.append(pd.Series(res_long))
 
     all_res.append(pd.Series(metrics_vector(s_groundtruth, imputed_expression, scaling=2e5)))
+    all_res = all_res + all_res_long
     df = pd.concat(all_res, axis=1)
     prop_score = metrics_vector(st_adata.obsm["cell_type"], agg_prop_estimates)
     df = pd.concat([df, pd.Series(prop_score)], axis=1)
-    df.columns = ["ct" + str(i) for i in range(5)]+["allct", "proportions"]    
+    df.columns = ["ct" + str(i) for i in range(5)] + ["ct_long" + str(i) for i in range(5)] +["allct", "proportions"]    
     df.to_csv(input_dir+model_subdir + "/result.csv")
-
 
 
 if __name__ == '__main__':

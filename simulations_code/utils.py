@@ -38,8 +38,8 @@ def metrics_vector(groundtruth, predicted, scaling=1, feature_shortlist=None):
     res = {}
     if feature_shortlist is not None:
         # shortlist_features
-        groundtruth = groundtruth[:, feature_shortlist]
-        predicted = predicted[:, feature_shortlist]
+        groundtruth = groundtruth[:, feature_shortlist].copy()
+        predicted = predicted[:, feature_shortlist].copy()
     n = predicted.shape[0]
     g = predicted.shape[1]       
     # correlations metrics

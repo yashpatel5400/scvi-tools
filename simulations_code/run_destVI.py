@@ -42,7 +42,7 @@ def main(input_dir, output_suffix, sc_epochs, st_epochs, amortization):
     logger.info("Running DestVI")
 
     # path management
-    output_dir = input_dir + output_suffix + '/'
+    output_dir = input_dir + output_suffix + "_" + amortization + '/'
 
     if not os.path.isdir(output_dir):
         logger.info("Directory doesn't exist, creating it")

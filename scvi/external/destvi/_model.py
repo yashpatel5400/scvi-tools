@@ -53,7 +53,6 @@ class DestVI(BaseModelClass):
         n_latent: int,
         n_layers: int,
         n_hidden: int,
-        amortized: bool = False,
         use_gpu: bool = True,
         **module_kwargs,
     ):

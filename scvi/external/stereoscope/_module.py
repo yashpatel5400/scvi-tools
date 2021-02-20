@@ -192,7 +192,7 @@ class SpatialDeconv(BaseModuleClass):
        # cell-type specific gene expression. Conceptually of shape (minibatch, celltype, gene). 
         # But in this case, it's the same for all spots with the same cell type
         beta = torch.nn.functional.softplus(self.beta) # n_genes
-        w = torch.nn.functional.softplus(self.W) # n_genes, n_spots
+        w = torch.nn.functional.softplus(self.W) # n_genes, n_cell_types
         px_ct = torch.exp(self.px_o).unsqueeze(1) * beta.unsqueeze(1) * w 
         return px_ct[:, y.long()[:, 0]].T # shape (minibatch, genes)
 
