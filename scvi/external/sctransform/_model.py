@@ -59,7 +59,7 @@ class SCTransform(BaseModelClass):
         use_jit: bool = True,
         train_size: float = 0.9,
         validation_size: Optional[float] = None,
-        batch_size: int = 1024,
+        batch_size: int = 128,
         plan_kwargs: Optional[dict] = None,
         **trainer_kwargs,
     ):
@@ -99,14 +99,14 @@ class SCTransform(BaseModelClass):
             batch_size=batch_size,
             use_gpu=use_gpu,
         )
-        optim = pyro.optim.ClippedAdam({"lr": lr})
+        optim = pyro.optim.Adam({"lr": lr})
+        pyro.clear_param_store()
         if use_jit:
             loss_fn = pyro.infer.JitTrace_ELBO()
             dl = self._make_data_loader(self.adata)
             trainer_kwargs["callbacks"] = [PyroJitGuideWarmup(dl)]
         else:
             loss_fn = pyro.infer.Trace_ELBO()
-        pyro.clear_param_store()
         training_plan = PyroTrainingPlan(
             self.module, optim=optim, loss_fn=loss_fn, **plan_kwargs
         )

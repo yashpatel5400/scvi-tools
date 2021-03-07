@@ -61,7 +61,7 @@ class SCTransformPyroModel(PyroModule):
         #     constraint=constraints.positive,
         # )
         self.theta_unsoft = PyroParam(
-            lambda: -5.0 * self.one * torch.ones(self.out_features),
+            lambda: -4.5 * self.one * torch.ones(self.out_features),
         )
         self.epsilon = 1e-6
 
@@ -89,6 +89,10 @@ class SCTransformModule(PyroBaseModuleClass):
         super().__init__()
         self._model = SCTransformPyroModel(in_features, out_features)
         self._guide = AutoDelta(self.model)
+        # def _passguide(*args, **kwargs):
+        #     pass
+
+        # self._guide = _passguide
 
     @property
     def model(self):
