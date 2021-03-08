@@ -42,6 +42,7 @@ class SCTransform(BaseModelClass):
         self.module = SCTransformModule(
             in_features=self.summary_stats["n_continuous_covs"],
             out_features=self.n_genes,
+            n_obs=1,  # updated in train method
             **model_kwargs,
         )
         self._model_summary_string = (
@@ -99,6 +100,7 @@ class SCTransform(BaseModelClass):
             batch_size=batch_size,
             use_gpu=use_gpu,
         )
+        self.module.model.n_obs = len(data_splitter.train_idx)
         optim = pyro.optim.Adam({"lr": lr})
         pyro.clear_param_store()
         if use_jit:

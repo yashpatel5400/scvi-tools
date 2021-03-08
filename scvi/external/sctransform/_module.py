@@ -37,11 +37,12 @@ class PyroJitGuideWarmup(Callback):
 
 
 class SCTransformPyroModel(PyroModule):
-    def __init__(self, in_features, out_features, scale_factor=None):
+    def __init__(self, in_features, out_features, n_obs, scale_factor=None):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.scale_factor = scale_factor
+        self.n_obs = n_obs
 
         self.register_buffer("one", torch.tensor(1.0))
 
@@ -66,12 +67,8 @@ class SCTransformPyroModel(PyroModule):
         self.epsilon = 1e-6
 
     def forward(self, x, covariates):
-        if self.scale_factor is None:
-            scale_factor = 1 / (x.shape[0] * x.shape[1])
-        else:
-            scale_factor = self.scale_factor
         log_mean = self.linear(covariates)
-        with pyro.plate("data", x.shape[0]):
+        with pyro.plate("data", size=self.n_obs, subsample_size=x.shape[0]):
             theta = softplus(self.theta_unsoft)
             nb_logits = log_mean - theta.log()
             pyro.sample(
@@ -84,10 +81,10 @@ class SCTransformPyroModel(PyroModule):
 
 
 class SCTransformModule(PyroBaseModuleClass):
-    def __init__(self, in_features, out_features):
+    def __init__(self, in_features, out_features, n_obs):
 
         super().__init__()
-        self._model = SCTransformPyroModel(in_features, out_features)
+        self._model = SCTransformPyroModel(in_features, out_features, n_obs)
         self._guide = AutoDelta(self.model)
         # def _passguide(*args, **kwargs):
         #     pass
