@@ -68,9 +68,9 @@ class SCTransformPyroModel(PyroModule):
 
     def forward(self, x, covariates):
         log_mean = self.linear(covariates)
+        theta = softplus(self.theta_unsoft)
+        nb_logits = log_mean - theta.log()
         with pyro.plate("data", size=self.n_obs, subsample_size=x.shape[0]):
-            theta = softplus(self.theta_unsoft)
-            nb_logits = log_mean - theta.log()
             pyro.sample(
                 "obs",
                 dist.NegativeBinomial(total_count=theta, logits=nb_logits).to_event(1),
