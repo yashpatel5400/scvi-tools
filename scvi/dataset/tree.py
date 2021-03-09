@@ -34,16 +34,15 @@ class TreeDataset(GeneExpressionDataset):
     will be used as a prior during model fitting.
 
     :param expr: ``scvi.dataset.GeneExpressionDataset`` instance.
-    :param tree_name: file path to tree to read in from.
-    :param tree: ``ete3.Tree`` instance.
+    :param tree: file path to tree to read in from ``ete3.Tree`` instance.
     """
 
     def __init__(
-        self, expr: GeneExpressionDataset, tree_name: str = None, tree: Tree = None
+        self, expr: GeneExpressionDataset, tree=None,
     ):
 
-        if tree_name is not None:
-            self.tree = Tree(tree_name, 1)
+        if tree is not None and type(tree) == str:
+            self.tree = Tree(tree, 1)
             # polytomy is not a problem anymore: message passing deals with general trees
             # self.tree.resolve_polytomy(recursive=True)
         else:
@@ -84,8 +83,8 @@ class TreeDataset(GeneExpressionDataset):
     def populate(self):
 
         tree = self.tree
-        if tree is None and self.tree_name is not None:
-            self.tree = Tree(tree_name, 1)
+        if tree is None and self.tree is not None:
+            self.tree = Tree(tree, 1)
         else:
             logger.error(
                 "Must provide a tree file path or a tree if you're using TreeDataset."
