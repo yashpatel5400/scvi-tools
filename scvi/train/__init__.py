@@ -17,5 +17,5 @@ __all__ = [
     "AdversarialTrainingPlan",
     "ClassifierTrainingPlan",
     "TrainRunner",
-    "Autotune"
+    "Autotune",
 ]
