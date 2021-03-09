@@ -3,62 +3,72 @@ import numpy as np
 from ete3 import Tree
 
 
-def precision_matrix(tree_name, d, branch_length):
+def precision_matrix(tree, d, branch_length):
     """
     :param tree_name: path of the ete3 tree file
     :param d: dimension of latent space
+    :param: branch_length: constant branch length along the tree, or dict of branch lengths
     :return: the covariance matrix of the gaussian vector induced by the tree,
      after inversion and post processing of the constructed precision matrix
     """
+
     # load tree
-    suffix = tree_name.split('.')[-1]
-    if suffix == "txt":
-        with open(tree_name, "r") as myfile:
-            tree_string = myfile.readlines()
-            tree = Tree(tree_string[0], 1)
-    else:
-        tree = Tree(tree_name, 1)
-    leaves = tree.get_leaves()
+    if type(tree) == str:
+        suffix = tree.split('.')[-1]
+        if suffix == "txt":
+            with open(tree, "r") as myfile:
+                tree_string = myfile.readlines()
+                tree = Tree(tree_string[0], 1)
+        else:
+            tree = Tree(tree, 1)
 
     # introduce an index for all the nodes
     parents = {}
     N = 0
-    #print("Traversing the tree")
     for idx, node in enumerate(tree.traverse("levelorder")):
         N += 1
         # set node index
         node.add_features(index=idx)
 
-    #print("total number of nodes in the tree:", N)
-    #print("number of leaves in the tree:", len(tree.get_leaves()))
-
-
+    # ancestor indexing + branch length dict
+    dist = {}
     for n in tree.traverse("levelorder"):
         if not n.is_root():
             ancestor = n.up.index
             parents[n.index] = ancestor
+            if type(branch_length) == dict:
+                dist[n.up.index] = n.up.dist
 
+    # Intitalize precision matrix
     inverse_covariance = np.zeros((N * d, N * d))
 
-    # parameter to control the variance
-    t = 1 / branch_length
-    for i in parents:
-        pi_ind = parents[i]
-        inverse_covariance[i * d: (i + 1) * d, i * d: (i + 1) * d] += np.identity(d) * t
-        inverse_covariance[pi_ind * d: (pi_ind + 1) * d, pi_ind * d: (pi_ind + 1) * d] += np.identity(d) * t
-        inverse_covariance[pi_ind * d: (pi_ind + 1) * d, i * d: (i + 1) * d] += - np.identity(d) * t
-        inverse_covariance[i * d: (i + 1) * d, pi_ind * d: (pi_ind + 1) * d] += - np.identity(d) * t
+    # the branch length is either constant along the tree, or
+    if type(branch_length) != dict:
+        t = 1 / branch_length
+        for i in parents:
+            pi_ind = parents[i]
+            inverse_covariance[i * d: (i + 1) * d, i * d: (i + 1) * d] += np.identity(d) * t
+            inverse_covariance[pi_ind * d: (pi_ind + 1) * d, pi_ind * d: (pi_ind + 1) * d] += np.identity(d) * t
+            inverse_covariance[pi_ind * d: (pi_ind + 1) * d, i * d: (i + 1) * d] += - np.identity(d) * t
+            inverse_covariance[i * d: (i + 1) * d, pi_ind * d: (pi_ind + 1) * d] += - np.identity(d) * t
 
-    inverse_covariance[0:d, 0:d] += np.identity(d)
+        inverse_covariance[0:d, 0:d] += np.identity(d)
+    else:
+        for i in parents:
+            pi_ind = parents[i]
+            t = 1 / branch_length[str(pi_ind)]
+            inverse_covariance[i * d: (i + 1) * d, i * d: (i + 1) * d] += np.identity(d) * t
+            inverse_covariance[pi_ind * d: (pi_ind + 1) * d, pi_ind * d: (pi_ind + 1) * d] += np.identity(d) * t
+            inverse_covariance[pi_ind * d: (pi_ind + 1) * d, i * d: (i + 1) * d] += - np.identity(d) * t
+            inverse_covariance[i * d: (i + 1) * d, pi_ind * d: (pi_ind + 1) * d] += - np.identity(d) * t
+
+        inverse_covariance[0:d, 0:d] += np.identity(d)
+
 
     # invert precision matrix
-    t1 = time.time()
     full_covariance = np.linalg.inv(inverse_covariance)
 
-    #print("inversion of leave covariance took {} seconds".format(time.time() - t1))
-
     #  delete the columns and the row corresponding to non-terminal nodes (leaves covariance)
-
     to_delete = []
     for i, n in enumerate(tree.traverse("levelorder")):
         if not n.is_leaf():
@@ -67,11 +77,11 @@ def precision_matrix(tree_name, d, branch_length):
 
     # delete rows
     x = np.delete(full_covariance, to_delete, 0)
+
     # delete columns
     leaves_covariance = np.delete(x, to_delete, 1)
 
-    #print("There are {} leaves".format(len(leaves)))
-    #print("The shape of the leaves precision matrix is {}".format(leaves_covariance.shape))
+    M = marginalize_covariance(full_covariance, to_delete, d)
 
     return leaves_covariance, full_covariance
 

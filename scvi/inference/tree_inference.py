@@ -53,6 +53,8 @@ class SequentialCladeSampler(SubsetRandomSampler):
         return iter([np.random.choice(l) for l in self.clades if len(l) > 0])
 
 
+
+
 class TreePosterior(Posterior):
     """The functional data unit for treeVAE.
 
@@ -76,7 +78,7 @@ class TreePosterior(Posterior):
     Let us instantiate a `trainer`, with a gene_dataset and a model
 
         >>> tree_dataset = TreeDataset(GeneExpressionDataset, tree)
-        >>> treevae= treeVAE(tree_dataset.nb_genes, tree = tree_dataset.tre
+        >>> treevae= treeVAE(tree_dataset.nb_genes, tree = tree_dataset.tree
         ... n_batch=tree_dataset.n_batches * use_batches, use_cuda=True)
         >>> trainer = TreeTrainer(treevae, tree_dataset)
         >>> trainer.train(n_epochs=400)
@@ -99,6 +101,7 @@ class TreePosterior(Posterior):
         self.clades = clades
         self.barcodes = gene_dataset.barcodes
         self.use_cuda = False
+
         sampler = SequentialCladeSampler(self.clades)
 
         batch_size = len(self.clades)
@@ -123,6 +126,8 @@ class TreePosterior(Posterior):
         # Iterate once over the posterior and compute the elbo
         print("computing elbo")
         self.use_cuda = False
+
+        elbo = 0
         for i_batch, tensors in enumerate(self):
             sample_batch, local_l_mean, local_l_var, batch_index, labels = tensors[:5]
             reconst_loss, qz, mp_lik = vae.forward(
@@ -134,16 +139,15 @@ class TreePosterior(Posterior):
                 y=labels,
                 **kwargs
             )
-            #elbo1 = torch.sum(reconst_loss).item()
-            #elbo2 = torch.sum(qz).item()
 
-        n_samples = len(self.indices)
-        elbo1 = torch.mean(reconst_loss).item()
-        elbo2 = torch.mean(qz).item()
-        elbo3 = -1 * mp_lik / n_samples
-        elbo = elbo1 + elbo2 + elbo3
-        print("ELBO Loss: {}".format(elbo))
-        #print(elbo1, elbo2, elbo3)
+            elbo += torch.sum(reconst_loss)
+            elbo += torch.sum(reconst_loss)
+            elbo += -1 * mp_lik
+
+        n_samples = len(self.barcodes)
+        elbo /= n_samples
+
+        print("ELBO Loss: {}".format(np.log(elbo)))
         return elbo
 
     @torch.no_grad()
@@ -176,7 +180,12 @@ class TreePosterior(Posterior):
                 for tensors in self:
                     sample_batch, _, _, batch_index, labels = tensors
                     if len(sample_batch.shape) > 2:
-                        sample_batch = sample_batch.view(sample_batch.shape[0], -1)
+                        # sample_batch = sample_batch.view(-1, sample_batch.shape[2])
+                        sample_batch = torch.mean(sample_batch, dim=1)
+
+                    #import pdb
+                    #pdb.set_trace()
+
                     px_rate = self.model.inference(
                         sample_batch,
                         batch_index=batch_index,
@@ -270,7 +279,7 @@ class TreePosterior(Posterior):
         assert self.model.reconstruction_loss in ["zinb", "nb", "poisson"]
         x_old = []
         x_new = []
-        for tensors in self.update({"batch_size": batch_size}):
+        for tensors in self.update({"batch_size": len(self.barcodes)}):
             sample_batch, _, _, batch_index, labels = tensors
             outputs = self.model.inference(
                 sample_batch, batch_index=batch_index, y=labels, n_samples=n_samples
@@ -282,6 +291,7 @@ class TreePosterior(Posterior):
             if self.model.reconstruction_loss == "poisson":
                 l_train = px_rate
                 l_train = torch.clamp(l_train, max=1e8)
+                #print(l_train)
                 dist = distributions.Poisson(
                     l_train
                 )  # Shape : (n_samples, n_cells_batch, n_genes)
@@ -304,9 +314,23 @@ class TreePosterior(Posterior):
             x_old.append(sample_batch.cpu())
             x_new.append(gene_expressions.cpu())
 
+            #import pdb
+            #pdb.set_trace()
+
         x_old = torch.cat(x_old)  # Shape (n_cells, n_genes)
         x_new = torch.cat(x_new)  # Shape (n_cells, n_genes, n_samples)
         return x_new.numpy(), x_old.numpy()
+
+
+    @torch.no_grad()
+    def get_libraries(self):
+        libraries = []
+        for tensors in self:
+            x, local_l_mean, local_l_var, batch_index, y = tensors
+            library = self.model.inference(x, batch_index, y)["library"]
+            libraries += [np.array(library.cpu())]
+        libraries = np.concatenate(libraries)
+        return libraries.ravel()
 
 
     @torch.no_grad()
@@ -314,40 +338,44 @@ class TreePosterior(Posterior):
                             query_node,
                             give_mean=False,
                             library_size=100,
-                            averaging=True):
+                            z_averaging=None,
+                            pp_averaging=None,
+                            empirical_var=False):
         """
         :param self:
         :param query_node: barcode of the query node node for which we want to perform missing value imputation
+        :param give_mean: bool: the mean of the NB distrbution if True
+        :param z_averaging: number of samples for latent space averaging
+        :param pp_averaging: number of samples for posterior predictive averaging
         :return: the imputed gene expression value at the query node
         """
         # 1. sampling from posterior z ~ q(z|x) at the leaves
-        if not averaging:
+        if not z_averaging:
             z = self.get_latent(give_mean=False)[0]
         else:
-            latents = [self.get_latent(give_mean=False)[0] for n in range(10)]
-            z = np.mean(np.stack(latents), axis=0)
+            latents_z = [self.get_latent(give_mean=False)[0] for n in range(z_averaging)]
+            z = np.mean(np.stack(latents_z), axis=0)
 
         # 2. Message passing & sampling from multivariate normal z* ~ p(z*|z)
-        if not averaging:
+        if not pp_averaging:
             mu_star, nu_star = self.model.posterior_predictive_density(query_node=query_node,
                                                                 evidence=z)
 
-            z_star = Normal(mu_star, torch.sqrt(torch.from_numpy(np.array([nu_star])))).sample()
+            z_star = Normal(mu_star, torch.from_numpy(np.array([nu_star]))).sample()
+            data_z = z_star
+
         else:
             normal_params = [self.model.posterior_predictive_density(query_node=query_node,
-                                                                evidence=z) for n in range(10)]
-            latents = []
+                                                                evidence=z) for n in range(pp_averaging)]
+            latents_z_star = []
             for (mu, nu) in normal_params:
-                latents.append(Normal(mu, torch.sqrt(torch.from_numpy(np.array([nu])))).sample())
+                latents_z_star.append(Normal(mu, torch.from_numpy(np.array([nu]))).sample())
 
-            #import pdb
-            #pdb.set_trace()
-
-            z_star = torch.mean(torch.stack(latents),
+            z_star = torch.mean(torch.stack(latents_z_star),
                                 dim=0)
+            data_z = np.array([z.cpu().numpy() for z in latents_z_star])
 
         # 3. Decode latent vector x* ~ p(x*|z = z*)
-        self.model.eval()
         px_scale, px_r, px_rate, px_dropout = self.model.decoder.forward(self.model.dispersion,
                                                                     z_star.view(1, -1).float(),
                                                                   torch.from_numpy(np.array([np.log(library_size)])),
@@ -358,20 +386,32 @@ class TreePosterior(Posterior):
         else:
             dispersion = torch.exp(self.model.px_r)
 
-        p = px_rate / (px_rate + dispersion)
-        l_train = Gamma(dispersion, (1 - p) / p).sample()
-        data = Poisson(l_train).sample().cpu().numpy()
+        # Sampling from NB
+        #p = px_rate / (px_rate + dispersion)
+        #l_train2 = Gamma(dispersion, (1 - p) / p).sample()
 
-        if give_mean:
-            return px_rate
+        l_train = torch.clamp(px_rate, max=1e8)
 
-        return data
+        data = Poisson(l_train).sample().cpu().numpy()[0]
+
+        if empirical_var:
+            samples = np.array([Poisson(l_train).sample().cpu().numpy().flatten() for i in range(1000)])
+            var = np.var(samples, axis=0)
+
+            if give_mean:
+                return px_rate, var, data_z
+
+            return data, var, data_z
+        else:
+            if give_mean:
+                return px_rate, data_z
+
+            return data, data_z
 
 
     @torch.no_grad()
     def empirical_qz_v(self, n_samples, norm):
         """
-        :param query_node: barcode of the query node node for which we want to perform missing value imputation
         :return: empirical variance of the encoder
         """
 
@@ -385,11 +425,13 @@ class TreePosterior(Posterior):
                        axis=0,
                        dtype=np.float64)
 
+
         if norm:
             norm_qz_v = [np.linalg.norm(v) for v in qz_v]
             return norm_qz_v
 
         return qz_v
+
 
 
 class TreeTrainer(Trainer):
@@ -465,6 +507,7 @@ class TreeTrainer(Trainer):
         """
 
         sample_batch, local_l_mean, local_l_var, batch_index, _ = tensors
+
         reconst_loss, qz, mp_lik = self.model.forward(
             x=sample_batch,
             local_l_mean=local_l_mean,
@@ -473,17 +516,23 @@ class TreeTrainer(Trainer):
             barcodes=self.barcodes,
         )
 
-        #import pdb
-        #pdb.set_trace()
+        k = 0.1
+        n_samples = len(self.train_set.indices)
 
-        loss_1 = torch.mean(reconst_loss)
+        loss_1 = torch.mean(reconst_loss) * n_samples
         self.history_train['Reconstruction'].append(loss_1.item())
-        loss_2 = self.kl_weight * torch.mean(qz)
-        self.history_train['Gaussian pdf'].append(self.kl_weight * loss_2.item())
-        loss_3 = -1 * self.kl_weight * (mp_lik / reconst_loss.shape[0])
-        self.history_train['MP_lik'].append(self.kl_weight * loss_3.item())
-        self.history_train['elbo'].append(loss_1.item() + loss_2.item() + loss_3.item())
-        return loss_1 + loss_2 + loss_3
+
+        loss_2 = self.kl_weight * k * n_samples * torch.mean(qz)
+        self.history_train['Gaussian pdf'].append(loss_2.item())
+
+        loss_3 = -1 * self.kl_weight * k * mp_lik
+        self.history_train['MP_lik'].append(loss_3)
+
+        self.history_train['elbo'].append(loss_1.item() + loss_2.item() + loss_3)
+
+
+
+        return (loss_1 + loss_2 + loss_3) / n_samples
 
     def on_epoch_begin(self):
         if self.n_epochs_kl_warmup is not None:

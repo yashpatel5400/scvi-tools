@@ -60,7 +60,7 @@ class TreeVAE(VAE):
         reconstruction_loss: str = "nb",
         tree: Tree = None,
         use_clades: bool = None,
-        prior_t: float = 1.0
+        prior_t: dict or float = None,
     ):
 
         super().__init__(
@@ -107,11 +107,19 @@ class TreeVAE(VAE):
         # leaves barcodes
         self.barcodes = [l.name for l in self.tree.get_leaves()]
 
-        # branch length got MP
-        self.prior_t = prior_t
+        # branch length for MP
+        if not prior_t:
+            prior_t = 1.0
+        if type(prior_t) == float:
+            self.prior_t = {}
+            for n in self.tree.traverse():
+                self.prior_t[n.name] = prior_t
+        else:
+            self.prior_t = prior_t
 
         # encoder's variance
         self.encoder_variance = []
+        self.expected_ge = []
 
     def initialize_messages(self, evidence, barcodes, d):
 
@@ -180,7 +188,7 @@ class TreeVAE(VAE):
         elif n == 1:
             # this happens when passing through the root
             k = incoming_messages[0]
-            root_node.nu = k.nu + self.prior_t  #root_node.get_distance(k)
+            root_node.nu = k.nu + self.prior_t[k.name]
             root_node.mu = k.mu
             root_node.log_z = 0
 
@@ -190,19 +198,21 @@ class TreeVAE(VAE):
             children_mu = [0] * n
 
             # code profiling
-            t0 = time.time()
             for i in range(n):
                 k = incoming_messages[i]
                 # nu
-                children_nu[i] = k.nu + self.prior_t  #root_node.get_distance(k)
-                root_node.nu += 1. / children_nu[i]
-                # mu
-                children_mu[i] = k.mu / children_nu[i]
+                children_nu[i] = k.nu + self.prior_t[k.name]
+                if children_nu[i] != 0:
+                    root_node.nu += 1. / children_nu[i]
+                    # mu
+                    children_mu[i] = k.mu / children_nu[i]
+                else:
+                    children_mu[i] = k.mu
                 root_node.mu += children_mu[i]
 
-            root_node.nu = 1. / root_node.nu
-            root_node.mu *= root_node.nu
-            #print("mu & nu took {} seconds".format(time.time() - t0))
+            if root_node.nu != 0:
+                root_node.nu = 1. / root_node.nu
+                root_node.mu *= root_node.nu
 
             def product_without(L, exclude):
                 """
@@ -241,8 +251,9 @@ class TreeVAE(VAE):
                         prod_2 = product_without(children_nu, [j, h])
                 k = incoming_messages[h]
                 l = incoming_messages[j]
-                Z_3 += prod_2 * torch.sum((k.mu - l.mu) ** 2).item()
-            Z_3 *= -0.5 / t
+                Z_3 += prod_2 * torch.sum((k.mu - l.mu) ** 2).item() * (-0.5)
+            if t != 0:
+                Z_3 /= t
             #print("Computing Normalizing constants took {}".format(time.time() - t0))
 
             root_node.log_z = Z_1 + Z_2 + Z_3
@@ -311,14 +322,13 @@ class TreeVAE(VAE):
             # when z is normal, untran_z == z
             untran_z = Normal(qz_m, qz_v.sqrt()).sample()
             z = self.z_encoder.z_transformation(untran_z)
-
-
-            #ql_m = ql_m.unsqueeze(0).expand((n_samples, ql_m.size(0), ql_m.size(1)))
-            #ql_v = ql_v.unsqueeze(0).expand((n_samples, ql_v.size(0), ql_v.size(1)))
-            #library = Normal(ql_m, ql_v.sqrt()).sample()
+            ql_m = ql_m.unsqueeze(0).expand((n_samples, ql_m.size(0), ql_m.size(1)))
+            ql_v = ql_v.unsqueeze(0).expand((n_samples, ql_v.size(0), ql_v.size(1)))
+            library = Normal(ql_m, ql_v.sqrt()).sample()
 
         if transform_batch is not None:
             dec_batch_index = transform_batch * torch.ones_like(batch_index)
+        ## WARNING ##
         else:
             dec_batch_index = batch_index
 
@@ -349,8 +359,8 @@ class TreeVAE(VAE):
             qz_m=qz_m,
             qz_v=qz_v,
             z=z,
-            ql_m=None,
-            ql_v=None,
+            ql_m=ql_m,
+            ql_v=ql_v,
             library=library,
         )
 
@@ -384,8 +394,10 @@ class TreeVAE(VAE):
         library = outputs["library"]
 
         self.encoder_variance.append(np.linalg.norm(qz_v.detach().numpy(), axis=1))
+        self.expected_ge.append((outputs["px_scale"].detach().numpy()))
 
-        # message passing likelihood
+        # Message passing likelihood
+
         self.initialize_visit()
         self.initialize_messages(
             z,
@@ -397,17 +409,22 @@ class TreeVAE(VAE):
         mp_lik = self.aggregate_messages_into_leaves_likelihood(
             z.shape[1], add_prior=True
         )
+        ##################################
 
-        qz = Normal(qz_m, torch.sqrt(qz_v)).log_prob(z).sum(dim=-1)
+        qz = Normal(qz_m, torch.sqrt(qz_v)).log_prob(z).sum(dim=1)
 
         #scVI
-        mean = torch.zeros_like(qz_m)
-        scale = torch.ones_like(qz_v)
-        qz = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(
-            dim=1)
+        #mean = torch.zeros_like(qz_m)
+        #scale = torch.ones_like(qz_v)
+        #qz = kl(Normal(qz_m, torch.sqrt(qz_v)),
+                #Normal(mean, scale)).sum(
+            #dim=1)
 
         # library size likelihood
-        # pl = LogNormal(ql_m, torch.sqrt(ql_v)).log_prob(l).sum(dim=1)
+        #kl_divergence_l = kl(Normal(ql_m, torch.sqrt(ql_v)),
+                             #Normal(local_l_mean, torch.sqrt(local_l_var))).sum(
+            #dim=1)
+
 
         reconst_loss = (
             self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)
