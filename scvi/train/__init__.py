@@ -1,4 +1,3 @@
-from ._autotune import Autotune
 from ._trainer import Trainer
 from ._trainingplans import (
     AdversarialTrainingPlan,
@@ -17,5 +16,4 @@ __all__ = [
     "AdversarialTrainingPlan",
     "ClassifierTrainingPlan",
     "TrainRunner",
-    "Autotune",
 ]
