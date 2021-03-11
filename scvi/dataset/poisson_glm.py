@@ -173,6 +173,9 @@ class Poisson_GLM:
     def binomial_thinning(self, p=0.5):
         self.X = binomial(self.X.astype(int), p)
 
+    def is_pos_def(self):
+        return np.all(np.linalg.eigvals(self.covariance) > 0), np.all(np.linalg.eigvals(self.leaves_covariance) > 0)
+
 
 
 

@@ -123,7 +123,6 @@ class TreeVAE(VAE):
 
     def initialize_messages(self, evidence, barcodes, d):
 
-        # at inference, torch tensors are detached
         if type(evidence) == np.ndarray:
             evidence = torch.from_numpy(evidence)
 
@@ -155,6 +154,7 @@ class TreeVAE(VAE):
                     log_z=0,
                 )
 
+
     def initialize_visit(self):
 
         for node in self.tree.traverse():
@@ -177,6 +177,7 @@ class TreeVAE(VAE):
                 node != prior_node or (node == prior_node and include_prior)
             ):
                 self.perform_message_passing(node, d, include_prior)
+                pdb.set_trace()
                 incoming_messages.append(node)
 
         n = len(incoming_messages)
@@ -186,20 +187,37 @@ class TreeVAE(VAE):
             return None
 
         elif n == 1:
-            # this happens when passing through the root
+            pdb.set_trace()
             k = incoming_messages[0]
             root_node.nu = k.nu + self.prior_t[k.name]
             root_node.mu = k.mu
             root_node.log_z = 0
+
+        # elif n == 2:
+        #     # let us give them arbitrary names k and l (could be left and right)
+        #     k = incoming_messages[0]
+        #     l = incoming_messages[1]
+        #
+        #     # let us compute the updates
+        #     k_nu_inc = k.nu + self.prior_t[k.name]
+        #     l_nu_inc = l.nu + self.prior_t[l.name]
+        #
+        #     root_node.nu = 1. / (1. / k_nu_inc + 1. / l_nu_inc)
+        #     root_node.mu = k.mu / k_nu_inc + l.mu / l_nu_inc
+        #     root_node.mu *= root_node.nu
+        #
+        #     lambda_ = k_nu_inc + l_nu_inc
+        #     root_node.log_z = -0.5 * torch.sum((k.mu - l.mu) ** 2).item() / lambda_
+        #     root_node.log_z -= d * 0.5 * np.log(2 * np.pi * lambda_)
 
         elif n >= 2:
             # we will keep track of mean and variances of the children nodes in 2 lists
             children_nu = [0] * n
             children_mu = [0] * n
 
-            # code profiling
             for i in range(n):
                 k = incoming_messages[i]
+                #pdb.set_trace()
                 # nu
                 children_nu[i] = k.nu + self.prior_t[k.name]
                 if children_nu[i] != 0:
@@ -207,6 +225,7 @@ class TreeVAE(VAE):
                     # mu
                     children_mu[i] = k.mu / children_nu[i]
                 else:
+                    pdb.set_trace()
                     children_mu[i] = k.mu
                 root_node.mu += children_mu[i]
 
@@ -242,7 +261,6 @@ class TreeVAE(VAE):
             Z_3 = 0
 
             # nested for loop --> need to optimize with numba jit
-            #t0 = time.time()
             for j in range(n):
                 for h in range(n):
                     if h == j:
@@ -254,8 +272,6 @@ class TreeVAE(VAE):
                 Z_3 += prod_2 * torch.sum((k.mu - l.mu) ** 2).item() * (-0.5)
             if t != 0:
                 Z_3 /= t
-            #print("Computing Normalizing constants took {}".format(time.time() - t0))
-
             root_node.log_z = Z_1 + Z_2 + Z_3
 
         else:
@@ -273,10 +289,9 @@ class TreeVAE(VAE):
 
         if add_prior:
             # add prior
-            nu_inc = 1 + root_node.nu
-            res += -0.5 * torch.sum(
-                root_node.mu ** 2
-            ).item() / nu_inc - d * 0.5 * np.log(2 * np.pi * nu_inc)
+            nu_inc = 1.0 + root_node.nu
+            res += -0.5 * torch.sum(root_node.mu ** 2).item() / nu_inc - d * 0.5 * np.log(2 * np.pi * nu_inc)
+
         return res
 
 

@@ -1,7 +1,6 @@
-import time
 import numpy as np
 from ete3 import Tree
-
+import pdb
 
 def precision_matrix(tree, d, branch_length):
     """
@@ -42,7 +41,7 @@ def precision_matrix(tree, d, branch_length):
     # Intitalize precision matrix
     inverse_covariance = np.zeros((N * d, N * d))
 
-    # the branch length is either constant along the tree, or
+    # the branch length is either constant along the tree, or a dictionary
     if type(branch_length) != dict:
         t = 1 / branch_length
         for i in parents:
@@ -81,8 +80,6 @@ def precision_matrix(tree, d, branch_length):
     # delete columns
     leaves_covariance = np.delete(x, to_delete, 1)
 
-    M = marginalize_covariance(full_covariance, to_delete, d)
-
     return leaves_covariance, full_covariance
 
 
@@ -101,5 +98,3 @@ def marginalize_covariance(covariance, delete_list, d):
         x = np.delete(covariance, to_delete[0], 0)
         marg_covariance = np.delete(x, to_delete[1], 1)
     return marg_covariance
-
-
