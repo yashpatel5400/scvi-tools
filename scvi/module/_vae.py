@@ -112,7 +112,7 @@ class VAE(BaseModuleClass):
         self.register_buffer("p_g", torch.from_numpy(p_g))
 
         if self.dispersion == "gene":
-            self.px_r = torch.nn.Parameter(torch.ones(n_input))
+            self.px_r = torch.nn.Parameter(torch.randn(n_input))
         elif self.dispersion == "gene-batch":
             self.px_r = torch.nn.Parameter(torch.randn(n_input, n_batch))
         elif self.dispersion == "gene-label":
