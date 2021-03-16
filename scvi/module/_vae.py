@@ -223,6 +223,7 @@ class VAE(BaseModuleClass):
         mu_cg = p_g * library.exp()
 
         x_ = (x_ - mu_cg) / torch.sqrt(mu_cg + torch.pow(mu_cg, 2) / self.px_r.exp())
+        x_ = torch.clamp(x_, -np.sqrt(128 / 30), np.sqrt(128 / 30))
 
         if cont_covs is not None and self.encode_covariates is True:
             encoder_input = torch.cat((x_, cont_covs), dim=-1)
