@@ -220,7 +220,7 @@ class VAE(BaseModuleClass):
 
         p_g = x_.sum(0)
         p_g /= p_g.sum()
-        mu_cg = p_g * library
+        mu_cg = p_g * library.exp()
 
         x_ = (x_ - mu_cg) / torch.sqrt(mu_cg + torch.pow(mu_cg, 2) / self.px_r.exp())
 
