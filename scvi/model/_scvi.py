@@ -2,7 +2,9 @@ import logging
 
 from anndata import AnnData
 
+from scvi import _CONSTANTS
 from scvi._compat import Literal
+from scvi.data import get_from_registry
 from scvi.model.base import UnsupervisedTrainingMixin
 from scvi.module import VAE
 
@@ -88,6 +90,8 @@ class SCVI(
             if "extra_categoricals" in self.scvi_setup_dict_
             else None
         )
+        p_g = get_from_registry(self.adata, _CONSTANTS.X_KEY).sum(0)
+        p_g /= p_g.sum()
         self.module = VAE(
             n_input=self.summary_stats["n_vars"],
             n_batch=self.summary_stats["n_batch"],
@@ -100,6 +104,7 @@ class SCVI(
             dispersion=dispersion,
             gene_likelihood=gene_likelihood,
             latent_distribution=latent_distribution,
+            p_g=p_g,
             **model_kwargs,
         )
         self._model_summary_string = (

@@ -96,6 +96,7 @@ class VAE(BaseModuleClass):
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_observed_lib_size: bool = True,
+        p_g=None,
     ):
         super().__init__()
         self.dispersion = dispersion
@@ -108,6 +109,7 @@ class VAE(BaseModuleClass):
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
         self.use_observed_lib_size = use_observed_lib_size
+        self.register_buffer("p_g", torch.from_numpy(p_g))
 
         if self.dispersion == "gene":
             self.px_r = torch.nn.Parameter(torch.ones(n_input))
@@ -218,9 +220,7 @@ class VAE(BaseModuleClass):
         if self.use_observed_lib_size:
             library = torch.log(x.sum(1)).unsqueeze(1)
 
-        p_g = x_.sum(0)
-        p_g /= p_g.sum()
-        mu_cg = p_g * library.exp()
+        mu_cg = self.p_g * library.exp()
 
         x_ = (x_ - mu_cg) / torch.sqrt(mu_cg + torch.pow(mu_cg, 2) / self.px_r.exp())
         x_ = torch.clamp(x_, -15, 15)
