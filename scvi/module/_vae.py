@@ -217,8 +217,12 @@ class VAE(BaseModuleClass):
         x_ = x
         if self.use_observed_lib_size:
             library = torch.log(x.sum(1)).unsqueeze(1)
-        if self.log_variational:
-            x_ = torch.log(1 + x_)
+
+        p_g = x_.sum(0)
+        p_g /= p_g.sum()
+        mu_cg = p_g * library
+
+        x_ = (x_ - mu_cg) / torch.sqrt(mu_cg + torch.pow(mu_cg, 2) / self.px_r.exp())
 
         if cont_covs is not None and self.encode_covariates is True:
             encoder_input = torch.cat((x_, cont_covs), dim=-1)
