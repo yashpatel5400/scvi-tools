@@ -29,7 +29,7 @@ import logging
 logger = logging.getLogger("scvi")
 
 
-param_path = "/home/ubuntu/simulation_LN/fixed_data/"
+param_path = "/data/yosef2/users/pierreboyeau/data/spatial_data/"
 PCA_path = param_path + "grtruth_PCA.npz"
 
 

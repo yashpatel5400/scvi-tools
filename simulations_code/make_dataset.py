@@ -30,7 +30,7 @@ import torch
 torch.manual_seed(0)
 from torch.distributions import Gamma
 
-param_path = "/home/ubuntu/simulation_LN/fixed_data/"
+param_path = "/data/yosef2/users/pierreboyeau/data/spatial_data/"
 PCA_path = param_path + "grtruth_PCA.npz"
 
 @click.command()

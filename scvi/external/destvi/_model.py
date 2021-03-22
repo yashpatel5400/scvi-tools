@@ -12,11 +12,46 @@ from scvi.lightning import TrainingPlan
 from scvi.external.destvi._module import HSTDeconv
 from scvi.external.condscvi._model import CondSCVI
 from torch.utils.data import TensorDataset, DataLoader
-from scvi.data import register_tensor_from_anndata
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
+from scvi.data import register_tensor_from_anndata
 from scvi.model.base import BaseModelClass
 
 logger = logging.getLogger(__name__)
+
+
+class CustomTrainingPlan(TrainingPlan):
+    def __init__(self, vae_model, n_obs_training, myparameters=None, **kwargs):
+        super().__init__(vae_model, n_obs_training, **kwargs)
+        self.myparameters = myparameters
+
+    def configure_optimizers(self):
+        if self.myparameters is not None:
+            logger.info("Training all parameters")
+            params = self.myparameters
+        else:
+            logger.info("Training subsample of all parameters")
+            params = filter(lambda p: p.requires_grad, self.module.parameters())
+        optimizer = torch.optim.Adam(
+            params, lr=self.lr, eps=0.01, weight_decay=self.weight_decay
+        )
+        config = {"optimizer": optimizer}
+        if self.reduce_lr_on_plateau:
+            scheduler = ReduceLROnPlateau(
+                optimizer,
+                patience=self.lr_patience,
+                factor=self.lr_factor,
+                threshold=self.lr_threshold,
+                threshold_mode="abs",
+                verbose=True,
+            )
+            config.update(
+                {
+                    "lr_scheduler": scheduler,
+                    "monitor": self.lr_scheduler_metric,
+                },
+            )
+        return config
 
 
 class DestVI(BaseModelClass):
@@ -30,7 +65,7 @@ class DestVI(BaseModelClass):
     st_adata
         spatial transcriptomics AnnData object that has been registered via :func:`~scvi.data.setup_anndata`.
     state_dict
-        state_dict from the CondSCVI model 
+        state_dict from the CondSCVI model
     use_gpu
         Use the GPU or not.
     **model_kwargs
@@ -54,10 +89,13 @@ class DestVI(BaseModelClass):
         n_layers: int,
         n_hidden: int,
         use_gpu: bool = True,
+        spatial_prior: bool = False,
         **module_kwargs,
     ):
         st_adata.obs["_indices"] = np.arange(st_adata.n_obs)
         register_tensor_from_anndata(st_adata, "ind_x", "obs", "_indices")
+        register_tensor_from_anndata(st_adata, "x_n", "obsm", "x_n")
+        register_tensor_from_anndata(st_adata, "ind_n", "obsm", "ind_n")
         super(DestVI, self).__init__(st_adata, use_gpu=use_gpu)
         self.module = HSTDeconv(
             n_spots=st_adata.n_obs,
@@ -67,12 +105,12 @@ class DestVI(BaseModelClass):
             n_latent=n_latent,
             n_layers=n_layers,
             n_hidden=n_hidden,
+            spatial_prior=spatial_prior,
             **module_kwargs,
         )
         self.cell_type_mapping = cell_type_mapping
-        self._model_summary_string = ("DestVI Model")
-        self.init_params_ = self._get_init_params(locals())  
-
+        self._model_summary_string = "DestVI Model"
+        self.init_params_ = self._get_init_params(locals())
 
     @classmethod
     def from_rna_model(
@@ -96,7 +134,11 @@ class DestVI(BaseModelClass):
         **model_kwargs
             Keyword args for :class:`~scvi.external.DestVI`
         """
-        state_dict = (sc_model.module.decoder.state_dict(), sc_model.module.px_decoder.state_dict(), sc_model.module.px_r.detach().cpu().numpy())
+        state_dict = (
+            sc_model.module.decoder.state_dict(),
+            sc_model.module.px_decoder.state_dict(),
+            sc_model.module.px_r.detach().cpu().numpy(),
+        )
 
         return cls(
             st_adata,
@@ -110,11 +152,92 @@ class DestVI(BaseModelClass):
             use_gpu=use_gpu,
             **model_kwargs,
         )
- 
+
+    def train(
+        self,
+        max_epochs: Optional[int] = None,
+        use_gpu: Optional[bool] = None,
+        train_size: float = 0.9,
+        validation_size: Optional[float] = None,
+        batch_size: int = 128,
+        plan_kwargs: Optional[dict] = None,
+        plan_class: Optional[None] = None,
+        train_indices=None,
+        test_indices=None,
+        **kwargs,
+    ):
+        from scvi import settings
+        from scvi.lightning import Trainer
+
+        if use_gpu is None:
+            use_gpu = self.use_gpu
+        else:
+            use_gpu = use_gpu and torch.cuda.is_available()
+        gpus = 1 if use_gpu else None
+        pin_memory = (
+            True if (settings.dl_pin_memory_gpu_training and use_gpu) else False
+        )
+
+        if max_epochs is None:
+            n_cells = self.adata.n_obs
+            max_epochs = np.min([round((20000 / n_cells) * 400), 400])
+
+        self.trainer = Trainer(
+            max_epochs=max_epochs,
+            gpus=gpus,
+            **kwargs,
+        )
+
+        if train_indices is None:
+            train_dl, val_dl, test_dl = self._train_test_val_split(
+                self.adata,
+                train_size=train_size,
+                validation_size=validation_size,
+                pin_memory=pin_memory,
+                batch_size=batch_size,
+            )
+        else:
+            dl_kwargs = dict(
+                pin_memory=pin_memory,
+                batch_size=batch_size,
+            )
+            logging.info("Using custom train val split")
+            train_dl = self._make_scvi_dl(
+                self.adata, indices=train_indices, shuffle=True, **dl_kwargs
+            )
+            test_dl = self._make_scvi_dl(
+                self.adata, indices=test_indices, shuffle=False, **dl_kwargs
+            )
+            val_dl = self._make_scvi_dl(
+                self.adata, indices=[], shuffle=False, **dl_kwargs
+            )
+        self.train_indices_ = train_dl.indices
+        self.test_indices_ = test_dl.indices
+        self.validation_indices_ = val_dl.indices
+
+        if plan_class is None:
+            plan_class = self._plan_class
+
+        plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else dict()
+        self._pl_task = plan_class(self.module, len(self.train_indices_), **plan_kwargs)
+
+        if train_size == 1.0:
+            # circumvent the empty data loader problem if all dataset used for training
+            self.trainer.fit(self._pl_task, train_dl)
+        else:
+            self.trainer.fit(self._pl_task, train_dl, val_dl)
+        try:
+            self.history_ = self.trainer.logger.history
+        except AttributeError:
+            self.history_ = None
+        self.module.eval()
+        if use_gpu:
+            self.module.cuda()
+        self.is_trained_ = True
 
     @property
     def _plan_class(self):
-        return TrainingPlan
+        return CustomTrainingPlan
 
     @property
     def _data_loader_cls(self):
@@ -139,7 +262,9 @@ class DestVI(BaseModelClass):
             data = dataset.X
             if isspmatrix(data):
                 data = data.A
-            dl = DataLoader(TensorDataset(torch.tensor(data, dtype=torch.float32)), batch_size=128) # create your dataloader
+            dl = DataLoader(
+                TensorDataset(torch.tensor(data, dtype=torch.float32)), batch_size=128
+            )  # create your dataloader
             prop_ = []
             for tensors in dl:
                 prop_local = self.module.get_proportions(x=tensors[0])
@@ -163,7 +288,9 @@ class DestVI(BaseModelClass):
             data = dataset.X
             if isspmatrix(dataset.X):
                 data = dataset.X.A
-            dl = DataLoader(TensorDataset(torch.tensor(data, dtype=torch.float32)), batch_size=128) # create your dataloader
+            dl = DataLoader(
+                TensorDataset(torch.tensor(data, dtype=torch.float32)), batch_size=128
+            )  # create your dataloader
             gamma_ = []
             for tensors in dl:
                 gamma_local = self.module.get_gamma(x=tensors[0])
@@ -199,12 +326,18 @@ class DestVI(BaseModelClass):
         if self.is_trained_ is False:
             raise RuntimeError("Please train the model first.")
 
-        dl = DataLoader(TensorDataset(torch.tensor(x, dtype=torch.float32), 
-                    torch.tensor(ind_x, dtype=torch.long), 
-                    torch.tensor(y, dtype=torch.long)), batch_size=128) # create your dataloader
+        dl = DataLoader(
+            TensorDataset(
+                torch.tensor(x, dtype=torch.float32),
+                torch.tensor(ind_x, dtype=torch.long),
+                torch.tensor(y, dtype=torch.long),
+            ),
+            batch_size=128,
+        )  # create your dataloader
         scale = []
         for tensors in dl:
-            px_scale = self.module.get_ct_specific_expression(tensors[0], tensors[1], tensors[2])
+            px_scale = self.module.get_ct_specific_expression(
+                tensors[0], tensors[1], tensors[2]
+            )
             scale += [px_scale.cpu()]
         return np.array(torch.cat(scale))
-    
