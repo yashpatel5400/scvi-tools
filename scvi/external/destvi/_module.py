@@ -310,7 +310,8 @@ class HSTDeconv(BaseModuleClass):
             v_n=v_ind_n,
         )
 
-    def loss(
+
+    def get_loss_components(
         self,
         tensors,
         inference_outputs,
@@ -326,27 +327,32 @@ class HSTDeconv(BaseModuleClass):
         px_o = generative_outputs["px_o"]
         gamma = generative_outputs["gamma"]
 
-        reconst_loss = -NegativeBinomial(px_rate, logits=px_o).log_prob(x)
-        reconst_loss = reconst_loss[..., loss_mask].sum(-1)
+        reconst_loss_all = -NegativeBinomial(px_rate, logits=px_o).log_prob(x)[..., loss_mask]
+        reconst_loss = reconst_loss_all.sum(-1)
 
         if self.spatial_prior:
             v = generative_outputs["v"]  # Shape minibatch_size, labels + 1
             v_n = generative_outputs[
                 "v_n"
             ]  # Shape: minibatch_size. n_neighbors, labels + 1
-            v = v.unsqueeze(1)
             if self.spatial_agg == "pair":
+                v = v.unsqueeze(1)
                 reg = self.lamb * (v - v_n) ** 2
                 # print(reg.shape)
                 assert reg.ndim == 3
                 reg = reg.sum(-1).sum(-1).mean()
+            elif self.spatial_agg == "pairl1":
+                v = v.unsqueeze(1)
+                reg = self.lamb * torch.abs(v - v_n)
+                assert reg.ndim == 3, (reg.shape, v.shape, v_n.shape)
+                reg = reg.sum(-1).mean()
             elif self.spatial_agg == "mean":
-                v_n = v_n.mean(0)
+                v_n = v_n.mean(1)
                 reg = self.lamb * (v - v_n) ** 2
-                assert reg.ndim == 2
+                assert reg.ndim == 2, (reg.shape, v.shape, v_n.shape)
                 reg = reg.sum(-1).mean()
         else:
-            reg = 0.0
+            reg = torch.tensor(0.0)
 
         # eta prior likelihood
         mean = torch.zeros_like(self.eta)
@@ -387,11 +393,44 @@ class HSTDeconv(BaseModuleClass):
             + glo_neg_log_likelihood_prior
         )
         loss += reg
+        return dict(
+            loss=loss,
+            reconst_loss=reconst_loss,
+            reg=reg,
+            neg_log_likelihood_prior=neg_log_likelihood_prior,
+            glo_neg_log_likelihood_prior=glo_neg_log_likelihood_prior,
+            reconst_loss_all=reconst_loss_all,
+        )
 
-        return LossRecorder(
+    def loss(
+        self,
+        tensors,
+        inference_outputs,
+        generative_outputs,
+        kl_weight: float = 1.0,
+        n_obs: int = 1.0,
+        loss_mask: torch.Tensor = None,
+    ):
+        loss_dict = self.get_loss_components(
+            tensors=tensors,
+            inference_outputs=inference_outputs,
+            generative_outputs=generative_outputs,
+            kl_weight=kl_weight,
+            n_obs=n_obs,
+            loss_mask=loss_mask,
+        )
+        loss = loss_dict["loss"]
+        reconst_loss =loss_dict["reconst_loss"]
+        reg = loss_dict["reg"]
+        glo_neg_log_likelihood_prior = loss_dict["glo_neg_log_likelihood_prior"]
+        reconst_loss_all = loss_dict["reconst_loss_all"]
+        loss_rec = LossRecorder(
             # loss, reconst_loss, neg_log_likelihood_prior, glo_neg_log_likelihood_prior
             loss, reconst_loss, reg, glo_neg_log_likelihood_prior
         )
+        loss_rec.reconstruction_loss_all = reconst_loss_all
+
+        return loss_rec
 
     @torch.no_grad()
     def sample(

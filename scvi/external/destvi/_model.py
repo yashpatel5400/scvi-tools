@@ -153,6 +153,59 @@ class DestVI(BaseModelClass):
             **model_kwargs,
         )
 
+    def construct_loaders(
+        self,
+        use_gpu: Optional[bool] = None,
+        train_size: float = 0.9,
+        validation_size: Optional[float] = None,
+        batch_size: int = 128,
+        train_indices=None,
+        test_indices=None,
+    ):
+        from scvi import settings
+        from scvi.lightning import Trainer
+
+        if use_gpu is None:
+            use_gpu = self.use_gpu
+        else:
+            use_gpu = use_gpu and torch.cuda.is_available()
+        gpus = 1 if use_gpu else None
+        pin_memory = (
+            True if (settings.dl_pin_memory_gpu_training and use_gpu) else False
+        )
+
+        if train_indices is None:
+            train_dl, val_dl, test_dl = self._train_test_val_split(
+                self.adata,
+                train_size=train_size,
+                validation_size=validation_size,
+                pin_memory=pin_memory,
+                batch_size=batch_size,
+            )
+        else:
+            dl_kwargs = dict(
+                pin_memory=pin_memory,
+                batch_size=batch_size,
+            )
+            logging.info("Using custom train val split")
+            train_dl = self._make_scvi_dl(
+                self.adata, indices=train_indices, shuffle=True, **dl_kwargs
+            )
+            test_dl = self._make_scvi_dl(
+                self.adata, indices=test_indices, shuffle=False, **dl_kwargs
+            )
+            val_dl = self._make_scvi_dl(
+                self.adata, indices=[], shuffle=False, **dl_kwargs
+            )
+        self.train_indices_ = train_dl.indices
+        self.test_indices_ = test_dl.indices
+        self.validation_indices_ = val_dl.indices
+
+        self._train_dl = train_dl
+        self._test_dl = test_dl
+        self._val_dl = val_dl
+
+
     def train(
         self,
         max_epochs: Optional[int] = None,
@@ -215,6 +268,10 @@ class DestVI(BaseModelClass):
         self.test_indices_ = test_dl.indices
         self.validation_indices_ = val_dl.indices
 
+        self._train_dl = train_dl
+        self._test_dl = test_dl
+        self._val_dl = val_dl
+
         if plan_class is None:
             plan_class = self._plan_class
 
@@ -242,6 +299,20 @@ class DestVI(BaseModelClass):
     @property
     def _data_loader_cls(self):
         return AnnDataLoader
+
+    def get_metric(self):
+        dl = self._train_dl
+        with torch.no_grad():
+            rloss_all = []
+            rloss = []
+            for tensors in dl:
+                _, outs_gen, outs_loss = self.module.forward(tensors)
+                rloss.append(outs_loss.reconstruction_loss.detach().cpu())
+                rloss_all.append(outs_loss.reconstruction_loss_all.detach().cpu())
+        rloss = torch.cat(rloss, 0).mean(0)
+        rloss_all = torch.cat(rloss_all, 0).mean(0)
+        return rloss.item(), rloss_all.numpy()
+
 
     def get_proportions(self, dataset=None, keep_noise=False) -> np.ndarray:
         """
