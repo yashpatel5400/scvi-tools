@@ -71,7 +71,10 @@ def precision_matrix(tree, d, branch_length):
     to_delete = []
     for i, n in enumerate(tree.traverse("levelorder")):
         if not n.is_leaf():
-            to_delete += [n.index * d, n.index * d + 1]
+            if d == 2:
+                to_delete += [n.index * d, n.index * d + 1]
+            elif d > 2:
+                to_delete += list(range(n.index * d, n.index * d + d))
     len(to_delete)
 
     # delete rows
@@ -89,8 +92,13 @@ def marginalize_covariance(covariance, delete_list, d):
         to_delete.append([])
     for i, to_delete_idx in enumerate(delete_list):
         for k in to_delete_idx:
-            to_delete[i].append(k * d)
-            to_delete[i].append(k * d + 1)
+            if d == 2:
+                to_delete[i].append(k * d)
+                to_delete[i].append(k * d + 1)
+            elif d > 2:
+                foo = list(range(k * d, k * d + d))
+                for f in foo:
+                    to_delete[i].append(f)
     if len(delete_list) == 1:
         x = np.delete(covariance, to_delete, 0)
         marg_covariance = np.delete(x, to_delete, 1)
