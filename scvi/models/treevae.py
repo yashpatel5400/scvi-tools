@@ -4,16 +4,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Normal, LogNormal, kl_divergence as kl
-from scvi.models.log_likelihood import log_zinb_positive, log_nb_positive
-from scvi.models.modules import Encoder, DecoderSCVI, LinearDecoderSCVI
+from torch.distributions import Normal
+from scvi.models.modules import LinearDecoderSCVI
 from scvi.models.utils import one_hot
-import torch.distributions as distributions
 from scvi.models.vae import VAE
 import pdb
 import time
 import numpy as np
-from numba import jit
+from torch.distributions import Normal, kl_divergence as kl
 
 torch.backends.cudnn.benchmark = True
 
@@ -61,6 +59,7 @@ class TreeVAE(VAE):
         tree: Tree = None,
         use_clades: bool = None,
         prior_t: dict or float = None,
+        ldvae: bool = False
     ):
 
         super().__init__(
@@ -114,8 +113,20 @@ class TreeVAE(VAE):
             self.prior_t = {}
             for n in self.tree.traverse():
                 self.prior_t[n.name] = prior_t
+            self.prior_t['prior_root'] = 1.0
         else:
             self.prior_t = prior_t
+
+        # linearly decoded VAE
+        if ldvae:
+            print("==== We will use a linear decoder ===")
+            self.decoder = LinearDecoderSCVI(
+                n_input=n_latent,
+                n_output=n_input,
+                n_cat_list=[n_batch],
+                use_batch_norm=False,
+                bias=True
+            )
 
         # encoder's variance
         self.encoder_variance = []
@@ -139,8 +150,7 @@ class TreeVAE(VAE):
         dic_mu[self.prior_root] = torch.from_numpy(np.zeros(d)).type(torch.DoubleTensor)
         dic_log_z[self.prior_root] = 0
 
-        ### ????????????? level-order
-        for n in self.tree.traverse():
+        for n in self.tree.traverse('levelorder'):
             if n.name in dic_nu:
                 n.add_features(
                     nu=dic_nu[n.name],
@@ -153,7 +163,6 @@ class TreeVAE(VAE):
                     mu=torch.from_numpy(np.zeros(d)).type(torch.DoubleTensor),
                     log_z=0,
                 )
-
 
     def initialize_visit(self):
 
@@ -177,7 +186,6 @@ class TreeVAE(VAE):
                 node != prior_node or (node == prior_node and include_prior)
             ):
                 self.perform_message_passing(node, d, include_prior)
-                pdb.set_trace()
                 incoming_messages.append(node)
 
         n = len(incoming_messages)
@@ -187,37 +195,36 @@ class TreeVAE(VAE):
             return None
 
         elif n == 1:
-            pdb.set_trace()
             k = incoming_messages[0]
             root_node.nu = k.nu + self.prior_t[k.name]
             root_node.mu = k.mu
             root_node.log_z = 0
 
-        # elif n == 2:
-        #     # let us give them arbitrary names k and l (could be left and right)
-        #     k = incoming_messages[0]
-        #     l = incoming_messages[1]
-        #
-        #     # let us compute the updates
-        #     k_nu_inc = k.nu + self.prior_t[k.name]
-        #     l_nu_inc = l.nu + self.prior_t[l.name]
-        #
-        #     root_node.nu = 1. / (1. / k_nu_inc + 1. / l_nu_inc)
-        #     root_node.mu = k.mu / k_nu_inc + l.mu / l_nu_inc
-        #     root_node.mu *= root_node.nu
-        #
-        #     lambda_ = k_nu_inc + l_nu_inc
-        #     root_node.log_z = -0.5 * torch.sum((k.mu - l.mu) ** 2).item() / lambda_
-        #     root_node.log_z -= d * 0.5 * np.log(2 * np.pi * lambda_)
+        elif n == 2:
+            # let us give them arbitrary names k and l (could be left and right)
+            k = incoming_messages[0]
+            l = incoming_messages[1]
 
-        elif n >= 2:
+            # let us compute the updates
+            k_nu_inc = k.nu + self.prior_t[k.name]
+            l_nu_inc = l.nu + self.prior_t[l.name]
+
+            root_node.nu = 1. / (1. / k_nu_inc + 1. / l_nu_inc)
+            root_node.mu = k.mu / k_nu_inc + l.mu / l_nu_inc
+            root_node.mu *= root_node.nu
+
+            lambda_ = k_nu_inc + l_nu_inc
+            root_node.log_z = -0.5 * torch.sum((k.mu - l.mu) ** 2) / lambda_
+            root_node.log_z -= d * 0.5 * np.log(2 * np.pi * lambda_)
+
+
+        elif n > 2:
             # we will keep track of mean and variances of the children nodes in 2 lists
             children_nu = [0] * n
             children_mu = [0] * n
 
             for i in range(n):
                 k = incoming_messages[i]
-                #pdb.set_trace()
                 # nu
                 children_nu[i] = k.nu + self.prior_t[k.name]
                 if children_nu[i] != 0:
@@ -225,7 +232,6 @@ class TreeVAE(VAE):
                     # mu
                     children_mu[i] = k.mu / children_nu[i]
                 else:
-                    pdb.set_trace()
                     children_mu[i] = k.mu
                 root_node.mu += children_mu[i]
 
@@ -261,17 +267,21 @@ class TreeVAE(VAE):
             Z_3 = 0
 
             # nested for loop --> need to optimize with numba jit
+            visited = set()
             for j in range(n):
                 for h in range(n):
                     if h == j:
                         continue
+                    if (h, j) in visited or(j, h) in visited:
+                        continue
                     else:
                         prod_2 = product_without(children_nu, [j, h])
-                k = incoming_messages[h]
-                l = incoming_messages[j]
-                Z_3 += prod_2 * torch.sum((k.mu - l.mu) ** 2).item() * (-0.5)
+                        visited.add((j, h))
+                        k = incoming_messages[h]
+                        l = incoming_messages[j]
+                        Z_3 += prod_2 * torch.sum((k.mu - l.mu) ** 2)
             if t != 0:
-                Z_3 /= t
+                Z_3 *= -0.5 / t
             root_node.log_z = Z_1 + Z_2 + Z_3
 
         else:
@@ -290,7 +300,7 @@ class TreeVAE(VAE):
         if add_prior:
             # add prior
             nu_inc = 1.0 + root_node.nu
-            res += -0.5 * torch.sum(root_node.mu ** 2).item() / nu_inc - d * 0.5 * np.log(2 * np.pi * nu_inc)
+            res += -0.5 * torch.sum(root_node.mu ** 2) / nu_inc - d * 0.5 * np.log(2 * np.pi * nu_inc)
 
         return res
 
@@ -412,34 +422,27 @@ class TreeVAE(VAE):
         self.expected_ge.append((outputs["px_scale"].detach().numpy()))
 
         # Message passing likelihood
-
-        self.initialize_visit()
-        self.initialize_messages(
-            z,
-            self.barcodes,
-            self.n_latent
-        )
-
-        self.perform_message_passing((self.tree & self.root), z.shape[1], False)
-        mp_lik = self.aggregate_messages_into_leaves_likelihood(
-            z.shape[1], add_prior=True
-        )
+        #self.initialize_visit()
+        #self.initialize_messages(z, self.barcodes, self.n_latent)
+        #self.perform_message_passing((self.tree & self.root), z.shape[1], False)
+        #mp_lik = self.aggregate_messages_into_leaves_likelihood(z.shape[1], add_prior=True)
+        mp_lik = None
         ##################################
 
-        qz = Normal(qz_m, torch.sqrt(qz_v)).log_prob(z).sum(dim=1)
+        #qz = Normal(qz_m, torch.sqrt(qz_v)).log_prob(z).sum(dim=-1)
 
         #scVI
-        #mean = torch.zeros_like(qz_m)
-        #scale = torch.ones_like(qz_v)
-        #qz = kl(Normal(qz_m, torch.sqrt(qz_v)),
-                #Normal(mean, scale)).sum(
-            #dim=1)
+        mean = torch.zeros_like(qz_m)
+
+        scale = torch.ones_like(qz_v)
+        qz = kl(Normal(qz_m, torch.sqrt(qz_v)),
+                Normal(mean, scale)).sum(
+            dim=1)
 
         # library size likelihood
         #kl_divergence_l = kl(Normal(ql_m, torch.sqrt(ql_v)),
                              #Normal(local_l_mean, torch.sqrt(local_l_var))).sum(
             #dim=1)
-
 
         reconst_loss = (
             self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)

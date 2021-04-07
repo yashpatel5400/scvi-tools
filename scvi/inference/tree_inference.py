@@ -2,6 +2,7 @@ import logging
 import random
 import sys
 import time
+import pdb
 
 from abc import abstractmethod
 from collections import defaultdict, OrderedDict
@@ -80,7 +81,6 @@ class TreePosterior(Posterior):
         >>> tree_dataset = TreeDataset(GeneExpressionDataset, tree)
         >>> treevae= treeVAE(tree_dataset.nb_genes, tree = tree_dataset.tree
         ... n_batch=tree_dataset.n_batches * use_batches, use_cuda=True)
-        >>> trainer = TreeTrainer(treevae, tree_dataset)
         >>> trainer.train(n_epochs=400)
     """
 
@@ -127,6 +127,7 @@ class TreePosterior(Posterior):
         print("computing elbo")
         self.use_cuda = False
 
+        lambda_ = 1
         elbo = 0
         for i_batch, tensors in enumerate(self):
             sample_batch, local_l_mean, local_l_var, batch_index, labels = tensors[:5]
@@ -141,13 +142,11 @@ class TreePosterior(Posterior):
             )
 
             elbo += torch.sum(reconst_loss)
-            elbo += torch.sum(reconst_loss)
-            elbo += -1 * mp_lik
+            elbo += lambda_ * torch.sum(qz)
+            #elbo -= lambda_ * mp_lik
 
         n_samples = len(self.barcodes)
         elbo /= n_samples
-
-        print("ELBO Loss: {}".format(np.log(elbo)))
         return elbo
 
     @torch.no_grad()
@@ -182,9 +181,6 @@ class TreePosterior(Posterior):
                     if len(sample_batch.shape) > 2:
                         # sample_batch = sample_batch.view(-1, sample_batch.shape[2])
                         sample_batch = torch.mean(sample_batch, dim=1)
-
-                    #import pdb
-                    #pdb.set_trace()
 
                     px_rate = self.model.inference(
                         sample_batch,
@@ -340,7 +336,10 @@ class TreePosterior(Posterior):
                             library_size=100,
                             z_averaging=None,
                             pp_averaging=None,
-                            empirical_var=False):
+                            empirical_var=False,
+                            other_posterior=None,
+                            known_latent=None
+                            ):
         """
         :param self:
         :param query_node: barcode of the query node node for which we want to perform missing value imputation
@@ -351,10 +350,19 @@ class TreePosterior(Posterior):
         """
         # 1. sampling from posterior z ~ q(z|x) at the leaves
         if not z_averaging:
-            z = self.get_latent(give_mean=False)[0]
+            if other_posterior:
+                z = other_posterior.get_latent()[0]
+            elif known_latent is not None:
+                z = known_latent
+            else:
+                z = self.get_latent(give_mean=False)[0]
         else:
-            latents_z = [self.get_latent(give_mean=False)[0] for n in range(z_averaging)]
-            z = np.mean(np.stack(latents_z), axis=0)
+            if other_posterior:
+                latents_z = [other_posterior.get_latent(give_mean=False)[0] for n in range(z_averaging)]
+                z = np.mean(np.stack(latents_z), axis=0)
+            else:
+                latents_z = [self.get_latent(give_mean=False)[0] for n in range(z_averaging)]
+                z = np.mean(np.stack(latents_z), axis=0)
 
         # 2. Message passing & sampling from multivariate normal z* ~ p(z*|z)
         if not pp_averaging:
@@ -373,7 +381,7 @@ class TreePosterior(Posterior):
 
             z_star = torch.mean(torch.stack(latents_z_star),
                                 dim=0)
-            data_z = np.array([z.cpu().numpy() for z in latents_z_star])
+            data_z = z_star
 
         # 3. Decode latent vector x* ~ p(x*|z = z*)
         px_scale, px_r, px_rate, px_dropout = self.model.decoder.forward(self.model.dispersion,
@@ -464,6 +472,7 @@ class TreeTrainer(Trainer):
         self,
         model,
         gene_dataset,
+        lambda_ = 1.0,
         train_size=0.8,
         test_size=None,
         n_epochs_kl_warmup=400,
@@ -481,15 +490,14 @@ class TreeTrainer(Trainer):
 
         self.barcodes = gene_dataset.barcodes
 
-        # initialize messages (??? needed)
-        #n_latent = self.model.n_latent
-        #null_latent = np.stack([np.array([0]*n_latent) for a in range(len(gene_dataset.barcodes))], axis=0)
-        #self.model.initialize_messages(null_latent, gene_dataset.barcodes, n_latent)
-
-        #loss function
+        #loss functions tracker
         self.history_train, self.history_eval = {}, {}
-        self.history_train['elbo'], self.history_train['Reconstruction'], self.history_train['MP_lik'], self.history_train['Gaussian pdf'] = [], [], [], []
-        self.history_eval['elbo'], self.history_eval['Reconstruction'], self.history_eval['MP_lik'], self.history_eval['Gaussian pdf'] = [], [], [], []
+        self.history_train['elbo_weighted'], self.history_train['elbo'], self.history_train['Reconstruction'],\
+                                            self.history_train['MP_lik'], self.history_train['Gaussian pdf'] = [], [], [], [], []
+        self.history_train['ratio'] = []
+
+        # Regularization weight
+        self.lambda_ = lambda_
 
     @property
     def posteriors_loop(self):
@@ -516,23 +524,27 @@ class TreeTrainer(Trainer):
             barcodes=self.barcodes,
         )
 
-        k = 0.1
         n_samples = len(self.train_set.indices)
 
         loss_1 = torch.mean(reconst_loss) * n_samples
-        self.history_train['Reconstruction'].append(loss_1.item())
+        self.history_train['Reconstruction'].append(loss_1.item() / n_samples)
 
-        loss_2 = self.kl_weight * k * n_samples * torch.mean(qz)
-        self.history_train['Gaussian pdf'].append(loss_2.item())
+        loss_2 = torch.mean(qz) * n_samples
+        self.history_train['Gaussian pdf'].append(loss_2.item() / n_samples)
 
-        loss_3 = -1 * self.kl_weight * k * mp_lik
-        self.history_train['MP_lik'].append(loss_3)
+        #loss_3 = -1 * mp_lik
+        #self.history_train['MP_lik'].append(loss_3.item() / n_samples)
 
-        self.history_train['elbo'].append(loss_1.item() + loss_2.item() + loss_3)
+        self.history_train['elbo'].append( (loss_1.item() + loss_2.item() ) / n_samples )        #+ loss_3.item()) / n_samples)
+        self.history_train['ratio'].append( loss_1.item() / self.lambda_ * self.kl_weight * loss_2.item() )
+        self.history_train['elbo_weighted'].append( ( loss_1.item() + (self.lambda_ * self.kl_weight * loss_2.item() ) ) / n_samples ) #+ (self.lambda_ * self.kl_weight * loss_3.item())) / n_samples)
 
+        #print("Encodings MP Likelihood: {}".format(self.history_train['MP_lik'][-1]))
+        print("ELBO Loss: {}".format(self.history_train['elbo'][-1]))
+        print("KL divergence: {}".format(self.history_train['Gaussian pdf'][-1]))
+        #return (loss_1 + (self.kl_weight * self.lambda_ * loss_2) + (self.lambda_ * self.kl_weight * loss_3)) / n_samples
 
-
-        return (loss_1 + loss_2 + loss_3) / n_samples
+        return (loss_1 + (self.kl_weight * self.lambda_ * loss_2)) / n_samples
 
     def on_epoch_begin(self):
         if self.n_epochs_kl_warmup is not None:
