@@ -169,7 +169,7 @@ def scvi_baseline_z(tree,
 
             imputed[n.name] = data
 
-    return imputed
+    return imputed, imputed_z
 
 @torch.no_grad()
 def cascvi_baseline_z(tree,
@@ -203,4 +203,18 @@ def cascvi_baseline_z(tree,
 
     return imputed
 
+def construct_latent(tree, leaves_z, internal_z):
+    # Merge internal nodes and leaves
+    full_latent = []
+    idx = 0
+
+    for i, n in enumerate(tree.traverse()):
+        if n.is_leaf():
+            full_latent.append(leaves_z[idx])
+            idx += 1
+        else:
+            full_latent.append(internal_z[n.name])
+
+    full_latent = np.vstack(full_latent)
+    return full_latent
 

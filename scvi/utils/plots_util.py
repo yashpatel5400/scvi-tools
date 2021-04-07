@@ -12,6 +12,9 @@ import networkx as nx
 from networkx.drawing.nx_pydot import graphviz_layout
 import pydot
 import random
+import seaborn as sns
+import pandas as pd
+from sklearn.preprocessing import normalize
 
 def plot_histograms(X, title):
     fig, axes = plt.subplots(1, 1,
@@ -139,9 +142,9 @@ def plot_density(data):
         ax.set_ylabel("Density")
         plt.show()
 
-        #print(f'Count statistics:\n  min:  {np.min(total_counts)}'
-              #f'\n  mean: {np.mean(total_counts)}'
-              #f'\n  max:  {np.max(total_counts)}')
+        print(f'Count statistics:\n  min:  {np.min(total_counts)}'
+              f'\n  mean: {np.mean(total_counts)}'
+              f'\n  max:  {np.max(total_counts)}')
 
 def plot_scatter_mean(mu, imputed, g, color):
     n_rows = int(g / 5)
@@ -251,28 +254,39 @@ def plot_losses(trainer):
     ax1.plot(trainer.history_train['Gaussian pdf'][1:],
              label="Gaussian pdf",
              color='orange',
-             linewidth=4.0
+             linewidth=6.0
              )
 
     ax1.plot(trainer.history_train['MP_lik'][1:],
              label="-1 * MP Likelihood",
              color='blue',
-             linewidth=4.0
+             linewidth=6.0,
+             marker='+'
              )
 
     ax2.plot(np.log(trainer.history_train['elbo'][1:]),
              label="elbo",
              color='red',
              linestyle=':',
-             linewidth=4.0
+             linewidth=6.0,
+             marker='o'
              )
 
     ax2.plot(np.log(trainer.history_train['Reconstruction'][1:]),
              label="Reconstruction error",
              color='green',
              linestyle=':',
-             linewidth=4.0
+             linewidth=6.0,
+             marker='o'
              )
+
+    ax2.plot(np.log(trainer.history_train['elbo_weighted'][1:]),
+         label="Reconstruction error",
+         color='green',
+         linestyle=':',
+         linewidth=6.0,
+         marker='o'
+         )
 
     ax2.set_title('ELBO & Reconstruction Error', fontsize=34)
     ax2.set_xlabel('Epoch', fontsize=34)
@@ -286,6 +300,61 @@ def plot_losses(trainer):
 
     plt.show()
 
+def training_dashboard(trainer, encoder_variance):
+    figure, [[ax1, ax2], [ax3, ax4], [ax5, ax6]] = plt.subplots(figsize=(45, 35), nrows=3, ncols=2)
+
+    legend = list(trainer.history_train.keys())
+    ax1.plot(trainer.history_train['elbo'], color='blue', linestyle=':', linewidth=4.0, marker='+')
+    ax1.set_xlabel('Epoch', fontsize=34)
+    ax1.set_ylabel('Elbo', fontsize=30)
+    ax1.set_title("Normalized ELBO", fontsize=40)
+    ax1.tick_params(axis='both', which='major', labelsize=25)
+    ax1.grid()
+    ax1.legend([legend[1]], loc='best', borderpad=4, fontsize=22)
+
+    ax2.plot(trainer.history_train['elbo_weighted'], color='red', linestyle=':', linewidth=4.0, marker='+')
+    ax2.set_xlabel('Epoch', fontsize=34)
+    ax2.set_ylabel('Elbo', fontsize=30)
+    ax2.set_title("Normalized weighted ELBO", fontsize=40)
+    ax2.tick_params(axis='both', which='major', labelsize=25)
+    ax2.grid()
+    ax2.legend([legend[0]], loc='best', borderpad=4, fontsize=22)
+
+    ax3.plot(trainer.history_train['Reconstruction'], color='green', linestyle=':', linewidth=4.0, marker='+')
+    ax3.set_xlabel('Epoch', fontsize=34)
+    ax3.set_ylabel('Reconstruction error', fontsize=30)
+    ax3.set_title("Normalized Reconstruction error", fontsize=40)
+    ax3.tick_params(axis='both', which='major', labelsize=25)
+    ax3.grid()
+    ax3.legend([legend[2]], loc='best', borderpad=4, fontsize=22)
+
+    ax4.plot(trainer.history_train['MP_lik'], color='purple', linestyle=':', linewidth=4.0, marker='+')
+    ax4.plot(trainer.history_train['Gaussian pdf'], color='orange', linestyle=':', linewidth=4.0, marker='+')
+    ax4.set_xlabel('Epoch', fontsize=34)
+    ax4.set_ylabel('prior  & variational likelihood', fontsize=30)
+    ax4.set_title("Normalized prior  & variational likelihood", fontsize=40)
+    ax4.tick_params(axis='both', which='major', labelsize=25)
+    ax4.grid()
+    ax4.legend(legend[3:5], loc='best', borderpad=4, fontsize=22)
+
+    ax5.plot(trainer.history_train['ratio'], color='pink', linestyle=':', linewidth=4.0, marker='o')
+    ax5.set_xlabel('Epoch', fontsize=34)
+    ax5.set_ylabel('Ratio', fontsize=30)
+    ax5.set_title("Reconstruction - likelihood Ratio", fontsize=40)
+    ax5.tick_params(axis='both', which='major', labelsize=25)
+    ax5.grid()
+    ax5.legend([legend[5]], loc='best', borderpad=4, fontsize=22)
+
+    ax6.plot(encoder_variance)
+    ax6.set_xlabel('Epoch', fontsize=34)
+    ax6.set_ylabel('Encoder variance', fontsize=30)
+    ax6.set_title("Encoder variance", fontsize=40)
+    ax6.tick_params(axis='both', which='major', labelsize=25)
+    ax6.grid()
+    ax6.legend([['encoder variance']], loc='best', borderpad=4, fontsize=22)
+
+    plt.suptitle('Training dashboard', fontsize=48)
+    plt.show()
 
 def plot_common_ancestor(tree, z, embedding='umap', give_labels=False):
     ##
@@ -333,7 +402,7 @@ def plot_common_ancestor(tree, z, embedding='umap', give_labels=False):
     plt.ylabel("z_2")
 
     ax.add_artist(legend1)
-
+    plt.grid()
     plt.show()
 
     if give_labels:
@@ -389,6 +458,37 @@ def plot_one_gene(tree, X, g, node_sizes, var, size, show_index, save_fig=False,
         plt.savefig("graph.pdf")
     else:
         plt.show()
+
+def plot_contour_dist(z, c):
+    z_min = np.min([np.min(z[:, 0]), np.min(z[:, 1])]) - 1.
+    z_max = np.max([np.max(z[:, 0]), np.max(z[:, 1])]) + 1.
+
+    sns.set(rc={'axes.labelsize':10,
+            'figure.figsize':(20.0, 10.0),
+            'xtick.labelsize':10,
+            'ytick.labelsize':10})
+
+    from itertools import chain
+    df = pd.DataFrame({"x":z[:, 0], "y":z[:, 1]})
+    p = sns.jointplot(data=df,
+                      x='x',
+                      y='y',
+                      kind='kde',
+                      xlim=(z_min, z_max),
+                      ylim=(z_min, z_max),
+                      fill=True,
+                      space=0,
+                      color=c,
+                      stat_func=None,
+                      marginal_kws={'lw':2,
+                                    'bw':0.2}).set_axis_labels('X','Y')
+
+    p.ax_marg_x.set_facecolor('#ccffccaa')
+    p.ax_marg_y.set_facecolor('#ccffccaa')
+    for l in chain(p.ax_marg_x.axes.lines,p.ax_marg_y.axes.lines):
+        l.set_linestyle('--')
+        l.set_color('black')
+    plt.title("Simulated Latent Space")
 
 
 

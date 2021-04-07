@@ -3,6 +3,9 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.neighbors import kneighbors_graph
+from sklearn.metrics import jaccard_score
+from sklearn.preprocessing import normalize
 
 def ks_pvalue(g, glm_samples, rep_samples):
     """
@@ -46,7 +49,7 @@ def accuracy_imputation(tree, groundtrtuh, imputed, gene):
         N += 1
     return (accuracy / N) * 100
 
-def correlations(data, normalization=None, vis=True):
+def correlations(data, normalization=None, vis=True, save_fig=None):
     """
     :param data: list: list of arrays with imputations (or ground truth) gene expression in this order: internal - imputed - baseline_avg, baseline_scvi - baseline_cascvi
     :param normalization: str: either "rank" or "quantile"
@@ -94,6 +97,7 @@ def correlations(data, normalization=None, vis=True):
                         stats.kendalltau(data6, data0)[0]])
         metrics.append(["cascVI Baseline 3", stats.spearmanr(data7, data0)[0], stats.pearsonr(data7, data0)[0],
                         stats.kendalltau(data7, data0)[0]])
+    
 
     df = pd.DataFrame(metrics, columns=columns)
 
@@ -117,8 +121,137 @@ def correlations(data, normalization=None, vis=True):
         axes[2].set_title("Kendall Tau")
 
         plt.suptitle("Correlations", fontsize=16)
-
+    
+    if save_fig:
+        plt.savefig(save_fig)
+    
     return df
+
+def knn_purity(max_neighbors, data, plot=True, do_normalize=True, save_fig=None):
+    if do_normalize:
+        for i in range(len(data)):
+            data[i] = normalize(data[i])
+    if len(data) == 3:
+        query_z, query_scvi_z, query_cascvi_z = data
+        n_neighbors = range(2, max_neighbors)
+        score_scvi = []
+        score_cascvi = []
+        for k in n_neighbors:
+            A = kneighbors_graph(query_scvi_z, k, mode='connectivity', include_self=True)
+            B = kneighbors_graph(query_cascvi_z, k, mode='connectivity', include_self=True)
+            C = kneighbors_graph(query_z, k, mode='connectivity', include_self=True)
+            score_scvi.append(jaccard_score(A.toarray().flatten(), C.toarray().flatten()))
+            score_cascvi.append(jaccard_score(B.toarray().flatten(), C.toarray().flatten()))
+
+        if plot:
+            plt.plot(n_neighbors, score_scvi, color='green', label='scVI', linestyle='dashed', linewidth=2, markersize=3, marker='+')
+            plt.plot(n_neighbors, score_cascvi, color='blue', label='cascVI', linestyle='dashed', linewidth=2, markersize=3, marker='+')
+            plt.xlabel('# neighbors'), plt.ylabel("purity"), plt.title("k-nn purity")
+            plt.legend()
+            plt.grid()
+            plt.show()
+
+    if len(data) == 5:
+        query_z, query_scvi_z, query_scvi_z_2, query_cascvi_z, query_cascvi_z_2 = data
+        n_neighbors = range(2, max_neighbors)
+        score_scvi, score_scvi_2 = [], []
+        score_cascvi, score_cascvi_2 = [], []
+        for k in n_neighbors:
+            A = kneighbors_graph(query_scvi_z, k, mode='connectivity', include_self=True)
+            B = kneighbors_graph(query_scvi_z_2, k, mode='connectivity', include_self=True)
+            C = kneighbors_graph(query_cascvi_z, k, mode='connectivity', include_self=True)
+            D = kneighbors_graph(query_cascvi_z_2, k, mode='connectivity', include_self=True)
+            E = kneighbors_graph(query_z, k, mode='connectivity', include_self=True)
+            score_scvi.append(jaccard_score(A.toarray().flatten(), E.toarray().flatten()))
+            score_scvi_2.append(jaccard_score(B.toarray().flatten(), E.toarray().flatten()))
+            score_cascvi.append(jaccard_score(C.toarray().flatten(), E.toarray().flatten()))
+            score_cascvi_2.append(jaccard_score(D.toarray().flatten(), E.toarray().flatten()))
+
+        if plot:
+            plt.plot(n_neighbors, score_scvi, color='green', label='scVI + averaging', linestyle='dashed', linewidth=2,
+                     markersize=3, marker='+')
+            plt.plot(n_neighbors, score_scvi_2, color='red', label='scVI + Message Passing', linestyle='dashed', linewidth=2,
+                     markersize=3, marker='+')
+            plt.plot(n_neighbors, score_cascvi, color='blue', label='cascVI + Message Passing', linestyle='dashed', linewidth=2,
+                     markersize=3, marker='+')
+            plt.plot(n_neighbors, score_cascvi_2, color='orange', label='cascVI + averaging', linestyle='dashed', linewidth=2,
+                     markersize=3, marker='+')
+
+            plt.xlabel('# neighbors'), plt.ylabel("purity"), plt.title("k-nn purity")
+            plt.legend()
+            plt.grid()
+            plt.show()
+
+        if save_fig:
+            plt.savefig(save_fig)
+
+    return score_scvi, score_cascvi
+
+def knn_purity_stratified(n_neighbors, tree, data, min_depth=2, plot=True, do_normalize=True):
+    if do_normalize:
+        for i in range(len(data)):
+            data[i] = normalize(data[i])
+
+    full_latent, full_scvi_latent, full_scvi_latent_2, full_cascvi_latent, full_cascvi_latent_2 = data
+
+    def get_nodes_depth(tree, d):
+        nodes_index = []
+        for i, n in enumerate(tree.traverse('levelorder')):
+            if n.get_distance(tree) == d:
+                nodes_index.append(n.index)
+        return nodes_index
+
+    def get_nodes(tree, nodes_index, X):
+        query_nodes = []
+        for n in tree.traverse('levelorder'):
+            if n.index in nodes_index:
+                query_nodes.append(X[n.index])
+        return np.array(query_nodes)
+
+    k = n_neighbors
+    max_depth = int(max([n.get_distance(tree) for n in tree.traverse('levelorder')]))
+    score_scvi, score_scvi_2 = [], []
+    score_cascvi, score_cascvi_2 = [], []
+    for d in range(min_depth, max_depth):
+        nodes_index = get_nodes_depth(tree, d)
+        query_scvi_z = get_nodes(tree, nodes_index, full_scvi_latent)
+        query_scvi_z_2 = get_nodes(tree, nodes_index, full_scvi_latent_2)
+        query_cascvi_z = get_nodes(tree, nodes_index, full_cascvi_latent)
+        query_cascvi_z_2 = get_nodes(tree, nodes_index, full_cascvi_latent_2)
+        query_z = get_nodes(tree, nodes_index, full_latent)
+        A = kneighbors_graph(query_scvi_z, k, mode='connectivity', include_self=True)
+        B = kneighbors_graph(query_scvi_z_2, k, mode='connectivity', include_self=True)
+        C = kneighbors_graph(query_cascvi_z, k, mode='connectivity', include_self=True)
+        D = kneighbors_graph(query_cascvi_z_2, k, mode='connectivity', include_self=True)
+        E = kneighbors_graph(query_z, k, mode='connectivity', include_self=True)
+        score_scvi.append(jaccard_score(A.toarray().flatten(), E.toarray().flatten()))
+        score_scvi_2.append(jaccard_score(B.toarray().flatten(), E.toarray().flatten()))
+        score_cascvi.append(jaccard_score(C.toarray().flatten(), E.toarray().flatten()))
+        score_cascvi_2.append(jaccard_score(D.toarray().flatten(), E.toarray().flatten()))
+
+    if plot:
+        plt.plot(range(min_depth, max_depth), score_scvi, color='green', label='scVI + averaging', linestyle='dashed', linewidth=2, markersize=12, marker='o')
+        plt.plot(range(min_depth, max_depth), score_scvi_2, color='red', label='scVI + Message passing', linestyle='dashed', linewidth=2,
+                 markersize=12, marker='o')
+        plt.plot(range(min_depth, max_depth), score_cascvi, color='orange', label='cascVI + Message Passing', linestyle='dashed', linewidth=2, markersize=12, marker='o')
+        plt.plot(range(min_depth, max_depth), score_cascvi_2, color='blue', label='cascVI + Averaging', linestyle='dashed',
+                 linewidth=2, markersize=12, marker='o')
+        plt.xlabel('# depth'), plt.ylabel("purity"), plt.title("k-nn purity")
+        plt.legend()
+        plt.grid()
+        plt.show()
+
+    return score_scvi, score_scvi_2, score_cascvi, score_cascvi_2
+
+
+
+
+
+
+
+
+
+
 
 
 
