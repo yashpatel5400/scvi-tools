@@ -324,6 +324,27 @@ class TreeVAE(VAE):
         self.perform_message_passing((self.tree & query_node), len(root_node.mu), True)
         return (self.tree & query_node).mu, (self.tree & query_node).nu
 
+    def get_reconstruction_loss(
+        self, x, px_rate, px_r, px_dropout, **kwargs
+    ) -> torch.Tensor:
+        # Reconstruction Loss
+        if self.reconstruction_loss == "zinb":
+            reconst_loss = (
+                -ZeroInflatedNegativeBinomial(
+                    mu=px_rate, theta=px_r, zi_logits=px_dropout
+                )
+                .log_prob(x)
+                .sum(dim=-1)
+            )
+        elif self.reconstruction_loss == "nb":
+            reconst_loss = (
+                -NegativeBinomial(mu=px_rate, theta=px_r).log_prob(x).sum(dim=-1)
+            )
+        elif self.reconstruction_loss == "poisson":
+            reconst_loss = -Poisson(px_rate).log_prob(x).sum(dim=-1)
+        #elif self.reconstruction_loss == "normal":
+        #    reconst_loss = -Noemal
+        return reconst_loss
 
     def inference(
         self, x, batch_index=None, y=None, n_samples=1, transform_batch=None
@@ -433,11 +454,9 @@ class TreeVAE(VAE):
 
         #scVI
         mean = torch.zeros_like(qz_m)
-
         scale = torch.ones_like(qz_v)
-        qz = kl(Normal(qz_m, torch.sqrt(qz_v)),
-                Normal(mean, scale)).sum(
-            dim=1)
+
+        qz = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(dim=1)
 
         # library size likelihood
         #kl_divergence_l = kl(Normal(ql_m, torch.sqrt(ql_v)),
