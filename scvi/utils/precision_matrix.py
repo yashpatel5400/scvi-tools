@@ -66,7 +66,12 @@ def precision_matrix(tree, d, branch_length):
 
     # invert precision matrix
     full_covariance = np.linalg.inv(inverse_covariance)
+    
+    leaves_covariance = marginalize_internal(full_covariance, tree, d)
 
+    return leaves_covariance, full_covariance
+
+def marginalize_internal(full_covariance, tree, d):
     #  delete the columns and the row corresponding to non-terminal nodes (leaves covariance)
     to_delete = []
     for i, n in enumerate(tree.traverse("levelorder")):
@@ -75,7 +80,6 @@ def precision_matrix(tree, d, branch_length):
                 to_delete += [n.index * d, n.index * d + 1]
             elif d > 2:
                 to_delete += list(range(n.index * d, n.index * d + d))
-    len(to_delete)
 
     # delete rows
     x = np.delete(full_covariance, to_delete, 0)
@@ -83,10 +87,9 @@ def precision_matrix(tree, d, branch_length):
     # delete columns
     leaves_covariance = np.delete(x, to_delete, 1)
 
-    return leaves_covariance, full_covariance
+    return leaves_covariance
 
-
-def marginalize_covariance(covariance, delete_list, d):
+def marginalize_covariance(full_covariance, delete_list, d):
     to_delete = []
     for i in range(len(delete_list)):
         to_delete.append([])

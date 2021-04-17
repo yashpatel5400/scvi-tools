@@ -183,7 +183,6 @@ class TestMessagePassing(TestCase):
                       (vae.tree & query_node).mu.numpy(), (vae.tree & query_node).nu
                       )
 
-
                 self.assertTrue((np.abs((vae.tree & query_node).nu - internal_post_covar[query_idx * d, query_idx * d])) < 1e-7)
                 for i in range(post_mean.shape[0]):
                     self.assertTrue((np.abs((vae.tree & query_node).mu.numpy()[i] - post_mean[i])) < 1e-7)
