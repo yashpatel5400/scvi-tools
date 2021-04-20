@@ -7,7 +7,7 @@ from ._callbacks import ModelSave, _TuneReportMetricFunctionsCallback
 class Autotune:
     """
 
-    Hyperparameter tuning for SCVI using Ray Tune.
+    Hyperparameter tuning using Ray Tune.
 
     Parameters
     ----------
