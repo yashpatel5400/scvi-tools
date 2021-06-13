@@ -12,7 +12,7 @@ from ._anntorchdataset import AnnTorchDataset
 logger = logging.getLogger(__name__)
 
 
-class BatchSampler(torch.utils.data.sampler.Sampler):
+class BatchSampler(torch.utils.data.distributed.DistributedSampler):
     """
     Custom torch Sampler that returns a list of indices of size batch_size.
 

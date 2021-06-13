@@ -48,6 +48,9 @@ def parse_use_gpu_arg(
         device = torch.device(use_gpu)
         # changes "cuda:0" to "0,"
         gpus = use_gpu.split(":")[-1] + ","
+    elif isinstance(use_gpu, list):
+        device = "cuda"
+        gpus = use_gpu
     else:
         raise ValueError("use_gpu argument not understood.")
 
