@@ -124,9 +124,9 @@ class TrainingPlan(pl.LightningModule):
         # lightning wants non loss keys detached
         return {
             "loss": scvi_loss.loss,
-            "reconstruction_loss_sum": reconstruction_loss.sum().detach(),
-            "kl_local_sum": scvi_loss.kl_local.sum().detach(),
-            "kl_global": scvi_loss.kl_global.detach(),
+            "reconstruction_loss_sum": reconstruction_loss.sum().item(),
+            "kl_local_sum": scvi_loss.kl_local.sum().item(),
+            "kl_global": scvi_loss.kl_global.item(),
             "n_obs": reconstruction_loss.shape[0],
         }
 
@@ -345,9 +345,9 @@ class AdversarialTrainingPlan(TrainingPlan):
             self.log("train_loss", loss, on_epoch=True)
             return {
                 "loss": loss,
-                "reconstruction_loss_sum": reconstruction_loss.sum().detach(),
-                "kl_local_sum": scvi_loss.kl_local.sum().detach(),
-                "kl_global": scvi_loss.kl_global.detach(),
+                "reconstruction_loss_sum": reconstruction_loss.sum().item(),
+                "kl_local_sum": scvi_loss.kl_local.sum().item(),
+                "kl_global": scvi_loss.kl_global.item(),
                 "n_obs": reconstruction_loss.shape[0],
             }
 
@@ -503,13 +503,13 @@ class SemiSupervisedTrainingPlan(TrainingPlan):
         self.log("train_loss", loss, on_epoch=True)
         loss_dict = {
             "loss": loss,
-            "reconstruction_loss_sum": reconstruction_loss.sum().detach(),
-            "kl_local_sum": scvi_losses.kl_local.sum().detach(),
-            "kl_global": scvi_losses.kl_global.detach(),
+            "reconstruction_loss_sum": reconstruction_loss.sum().item(),
+            "kl_local_sum": scvi_losses.kl_local.sum().item(),
+            "kl_global": scvi_losses.kl_global.item(),
             "n_obs": reconstruction_loss.shape[0],
         }
         if hasattr(scvi_losses, "classification_loss"):
-            loss_dict["classification_loss"] = scvi_losses.classification_loss.detach()
+            loss_dict["classification_loss"] = scvi_losses.classification_loss.item()
             loss_dict["n_labelled_tensors"] = scvi_losses.n_labelled_tensors
         return loss_dict
 
