@@ -10,12 +10,12 @@ from scvi import _CONSTANTS
 from scvi.module import DemuxVAE
 
 from ._totalvi import _get_totalvi_protein_priors
-from .base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
+from .base import BaseModelClass, UnsupervisedTrainingMixin
 
 logger = logging.getLogger(__name__)
 
 
-class DEMUXVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
+class DEMUXVI(UnsupervisedTrainingMixin, BaseModelClass):
     """
     demux variational inference
 
@@ -45,7 +45,6 @@ class DEMUXVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
     def __init__(
         self,
         adata: AnnData,
-        n_latent: int = 5,
         empirical_protein_background_prior: Optional[bool] = None,
         **model_kwargs,
     ):
@@ -65,27 +64,20 @@ class DEMUXVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
 
         self.module = DemuxVAE(
             n_input=self.summary_stats["n_vars"],
-            n_latent=n_latent,
             protein_background_prior_mean=prior_mean,
             protein_background_prior_scale=prior_scale,
             **model_kwargs,
         )
-        self._model_summary_string = (
-            "DemuxVI Model with the following params: \nn_latent: {}, "
-        ).format(
-            n_latent,
-        )
+        self._model_summary_string = ""
         self.init_params_ = self._get_init_params(locals())
 
     @torch.no_grad()
-    def predict_foreground_proba(self, n_samples_mc: int = 10000) -> np.ndarray:
+    def predict_foreground_proba(self) -> np.ndarray:
         adata = self._validate_anndata(None)
         scdl = self._make_data_loader(adata=adata, indices=None, batch_size=None)
         pi = []
         for tensors in scdl:
-            p = 1 - self.module.get_pi(
-                tensors[_CONSTANTS.X_KEY], n_samples_mc=n_samples_mc
-            )
+            p = 1 - self.module.get_pi(tensors[_CONSTANTS.X_KEY])
             pi.append(p.cpu().numpy())
 
         return np.concatenate(pi)

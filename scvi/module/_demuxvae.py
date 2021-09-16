@@ -30,7 +30,6 @@ class DemuxVAE(BaseModuleClass):
         self,
         n_input: int,
         n_hidden: int = 15,
-        n_latent: int = 4,
         dropout_rate: float = 0.2,
         pi_prior_scale: float = 0.05,
         pi_prior_mean: float = 0,
@@ -43,15 +42,13 @@ class DemuxVAE(BaseModuleClass):
         self.pi_prior_scale = pi_prior_scale
         self.latent_distribution = "normal"
 
-        # z
+        # hidden shared layer
         self.fc1 = nn.Sequential(
             nn.Linear(n_input, n_hidden),
             nn.BatchNorm1d(n_hidden),
             nn.ReLU(),
             nn.Dropout(p=dropout_rate),
         )
-        self.fc21 = nn.Linear(n_hidden, n_latent)
-        self.fc22 = nn.Linear(n_hidden, n_latent)
 
         # background mean
         self.fc3 = nn.Sequential(
@@ -88,7 +85,7 @@ class DemuxVAE(BaseModuleClass):
         )
 
         self.zi_pi_logits = nn.Sequential(
-            nn.Linear(n_latent, n_hidden),
+            nn.Linear(n_hidden, n_hidden),
             nn.ReLU(),
             nn.Linear(n_hidden, n_input),
         )
@@ -118,34 +115,21 @@ class DemuxVAE(BaseModuleClass):
 
     def _get_generative_input(self, tensors, inference_outputs):
         x = tensors[_CONSTANTS.X_KEY]
-        z = inference_outputs["z"]
 
-        return dict(x=x, z=z)
+        return dict(x=x)
 
     @auto_move_data
     def inference(self, x):
 
         x_ = torch.log(1 + x)
-        # x_ = x
         output = {}
         h1 = self.fc1(x_)
-        output["qz_m"] = self.fc21(h1)
-        output["qz_v"] = torch.exp(0.5 * self.fc22(h1))
-
-        output["z"] = Normal(output["qz_m"], output["qz_v"].sqrt()).rsample()
 
         h2 = self.fc3(h1)
         output["beta"] = self.fc41(h2).exp()
-        # output["beta_scale"] = torch.exp(0.5 * self.fc42(h2))
-        # output["beta"] = torch.clamp(
-        #     F.softplus(Normal(output["beta_m"], output["beta_scale"]).rsample()),
-        #     max=np.exp(12),
-        # )
 
         h3 = self.fc5(h1)
         output["pi_logits"] = self.fc61(h3)
-        # output["pi_beta"] = torch.exp(0.5 * self.fc62(h3))
-        # output["pi_logits"] = Normal(output["pi_alpha"], output["pi_beta"]).rsample()
 
         mean_increment = torch.relu(self.increment(h1)) + 1
         output["mean_increment"] = mean_increment
@@ -153,33 +137,15 @@ class DemuxVAE(BaseModuleClass):
         return output
 
     @auto_move_data
-    def generative(self, x, z):
+    def generative(self, x):
         output = {}
         return output
 
-    def get_pi(self, x, mean=True, n_samples_mc=50000):
+    def get_pi(self, x):
 
         e_out = self.inference(x)
-        # output = self._decode(e_out["z"])
-        # return torch.sigmoid(output["pi_logits"])
-        if mean is True:
-            # pi = (e_out["pi_alpha"]) / (e_out["pi_alpha"] + e_out["pi_beta"])
-            # return pi
-            # samples = Normal(e_out["pi_alpha"], e_out["pi_beta"]).sample([n_samples_mc])
-            # pi = torch.sigmoid(samples)
-            # pi = pi.mean(dim=0)
-            pi = torch.sigmoid(e_out["pi_logits"])
-            return pi
-        else:
-            return e_out["pi"]
-
-    def get_z(self, x, mean=True):
-
-        e_out = self.inference(x)
-        if mean is True:
-            return e_out["qz_m"]
-        else:
-            return e_out["z"]
+        pi = torch.sigmoid(e_out["pi_logits"])
+        return pi
 
     def loss(
         self, tensors, inference_outputs, generative_outputs, kl_weight=1.0, eps=1e-8
@@ -207,21 +173,6 @@ class DemuxVAE(BaseModuleClass):
             mixture_logits=pi_logits,
         )
         reconst = -px_conditional.log_prob(tensors[_CONSTANTS.X_KEY]).sum(dim=-1)
-
-        # kl_z = kl(Normal(inf_out["qz_m"], inf_out["qz_v"].sqrt()), Normal(0, 1)).sum(
-        #     dim=-1
-        # )
-        # kl_beta = kl(
-        #     Normal(inf_out["beta_m"], inf_out["beta_scale"]),
-        #     Normal(
-        #         self.background_prior_mean,
-        #         torch.exp(0.5 * self.background_prior_log_scale),
-        #     ),
-        # ).sum(dim=-1)
-        # kl_pi = kl(
-        #     Normal(inf_out["pi_alpha"], inf_out["pi_beta"]),
-        #     Normal(self.pi_prior_mean, self.pi_prior_scale),
-        # ).sum(dim=-1)
 
         prior = (
             -Normal(
