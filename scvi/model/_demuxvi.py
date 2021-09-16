@@ -96,11 +96,12 @@ class DEMUXVI(VAEMixin, UnsupervisedTrainingMixin, BaseModelClass):
         background_proba = 1 - foreground_proba
 
         df = pd.DataFrame(index=self.adata.obs_names)
-        df["Negative"] = np.prod(background_proba, axis=1)
+        df["Negative"] = np.exp(np.sum(np.log(background_proba), axis=1))
 
         for i, h in enumerate(self.adata.var_names):
-            df[f"Singlet_{h}"] = foreground_proba[i] * np.prod(
-                np.delete(background_proba, i, 1), axis=1
+            df[f"Singlet_{h}"] = np.exp(
+                np.log(foreground_proba[:, i])
+                + np.sum(np.delete(np.log(background_proba), i, 1), axis=1)
             )
 
         df["Multiplet"] = 1 - df.sum(1)

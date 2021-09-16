@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
-from torch.distributions import kl_divergence as kl
 
 from scvi import _CONSTANTS
 from scvi.distributions import NegativeBinomialMixture
@@ -47,8 +46,8 @@ class DemuxVAE(BaseModuleClass):
         # z
         self.fc1 = nn.Sequential(
             nn.Linear(n_input, n_hidden),
-            nn.LayerNorm(n_hidden, elementwise_affine=False),
-            nn.LeakyReLU(),
+            nn.BatchNorm1d(n_hidden),
+            nn.ReLU(),
             nn.Dropout(p=dropout_rate),
         )
         self.fc21 = nn.Linear(n_hidden, n_latent)
@@ -56,8 +55,9 @@ class DemuxVAE(BaseModuleClass):
 
         # background mean
         self.fc3 = nn.Sequential(
-            nn.Linear(n_input, n_hidden),
-            nn.LeakyReLU(),
+            nn.Linear(n_hidden, n_hidden),
+            nn.BatchNorm1d(n_hidden),
+            nn.ReLU(),
             nn.Dropout(p=dropout_rate),
         )
         self.fc41 = nn.Linear(n_hidden, n_input)
@@ -65,28 +65,31 @@ class DemuxVAE(BaseModuleClass):
 
         # pi
         self.fc5 = nn.Sequential(
-            nn.Linear(n_input, n_hidden),
-            nn.LeakyReLU(),
+            nn.Linear(n_hidden, n_hidden),
+            nn.BatchNorm1d(n_hidden),
+            nn.ReLU(),
             nn.Dropout(p=dropout_rate),
         )
         self.fc61 = nn.Linear(n_hidden, n_input)
         self.fc62 = nn.Linear(n_hidden, n_input)
 
         self.increment = nn.Sequential(
-            nn.Linear(n_latent, n_hidden),
-            nn.LeakyReLU(),
+            nn.Linear(n_hidden, n_hidden),
+            nn.BatchNorm1d(n_hidden),
+            nn.ReLU(),
             nn.Linear(n_hidden, n_input),
         )
 
         self.pi_logits = nn.Sequential(
-            nn.Linear(n_latent, n_hidden),
-            nn.LeakyReLU(),
+            nn.Linear(n_hidden, n_hidden),
+            nn.BatchNorm1d(n_hidden),
+            nn.ReLU(),
             nn.Linear(n_hidden, n_input),
         )
 
         self.zi_pi_logits = nn.Sequential(
             nn.Linear(n_latent, n_hidden),
-            nn.LeakyReLU(),
+            nn.ReLU(),
             nn.Linear(n_hidden, n_input),
         )
 
@@ -114,9 +117,10 @@ class DemuxVAE(BaseModuleClass):
         return dict(x=x)
 
     def _get_generative_input(self, tensors, inference_outputs):
+        x = tensors[_CONSTANTS.X_KEY]
         z = inference_outputs["z"]
 
-        return dict(z=z)
+        return dict(x=x, z=z)
 
     @auto_move_data
     def inference(self, x):
@@ -130,35 +134,30 @@ class DemuxVAE(BaseModuleClass):
 
         output["z"] = Normal(output["qz_m"], output["qz_v"].sqrt()).rsample()
 
-        h2 = self.fc3(x_)
-        output["beta_m"] = self.fc41(h2)
-        output["beta_scale"] = torch.exp(0.5 * self.fc42(h2))
-        output["beta"] = torch.clamp(
-            Normal(output["beta_m"], output["beta_scale"]).rsample().exp(),
-            max=np.exp(12),
-        )
+        h2 = self.fc3(h1)
+        output["beta"] = self.fc41(h2).exp()
+        # output["beta_scale"] = torch.exp(0.5 * self.fc42(h2))
+        # output["beta"] = torch.clamp(
+        #     F.softplus(Normal(output["beta_m"], output["beta_scale"]).rsample()),
+        #     max=np.exp(12),
+        # )
 
-        h3 = self.fc5(x_)
-        output["pi_alpha"] = self.fc61(h3)
-        output["pi_beta"] = torch.exp(0.5 * self.fc62(h3))
-        output["pi_logits"] = Normal(output["pi_alpha"], output["pi_beta"]).rsample()
+        h3 = self.fc5(h1)
+        output["pi_logits"] = self.fc61(h3)
+        # output["pi_beta"] = torch.exp(0.5 * self.fc62(h3))
+        # output["pi_logits"] = Normal(output["pi_alpha"], output["pi_beta"]).rsample()
+
+        mean_increment = torch.relu(self.increment(h1)) + 1
+        output["mean_increment"] = mean_increment
 
         return output
 
     @auto_move_data
-    def generative(self, z):
+    def generative(self, x, z):
         output = {}
-
-        output["pi_logits"] = self.pi_logits(z)
-
-        mean_increment = torch.relu(self.increment(z)) + 1
-        output["mean_increment"] = mean_increment
-
-        output["zi_pi_logits"] = self.zi_pi_logits(z)
-
         return output
 
-    def get_pi(self, x, mean=True, n_samples_mc=100000):
+    def get_pi(self, x, mean=True, n_samples_mc=50000):
 
         e_out = self.inference(x)
         # output = self._decode(e_out["z"])
@@ -166,9 +165,10 @@ class DemuxVAE(BaseModuleClass):
         if mean is True:
             # pi = (e_out["pi_alpha"]) / (e_out["pi_alpha"] + e_out["pi_beta"])
             # return pi
-            samples = Normal(e_out["pi_alpha"], e_out["pi_beta"]).sample([n_samples_mc])
-            pi = torch.sigmoid(samples)
-            pi = pi.mean(dim=0)
+            # samples = Normal(e_out["pi_alpha"], e_out["pi_beta"]).sample([n_samples_mc])
+            # pi = torch.sigmoid(samples)
+            # pi = pi.mean(dim=0)
+            pi = torch.sigmoid(e_out["pi_logits"])
             return pi
         else:
             return e_out["pi"]
@@ -186,9 +186,8 @@ class DemuxVAE(BaseModuleClass):
     ):
 
         inf_out = inference_outputs
-        gen_out = generative_outputs
 
-        mean_foreground = gen_out["mean_increment"] * inf_out["beta"]
+        mean_foreground = inf_out["mean_increment"] * inf_out["beta"]
         theta = torch.exp(self.log_disp)
         pi_logits = inf_out["pi_logits"]
 
@@ -209,22 +208,33 @@ class DemuxVAE(BaseModuleClass):
         )
         reconst = -px_conditional.log_prob(tensors[_CONSTANTS.X_KEY]).sum(dim=-1)
 
-        kl_z = kl(Normal(inf_out["qz_m"], inf_out["qz_v"].sqrt()), Normal(0, 1)).sum(
-            dim=-1
-        )
-        kl_beta = kl(
-            Normal(inf_out["beta_m"], inf_out["beta_scale"]),
-            Normal(
+        # kl_z = kl(Normal(inf_out["qz_m"], inf_out["qz_v"].sqrt()), Normal(0, 1)).sum(
+        #     dim=-1
+        # )
+        # kl_beta = kl(
+        #     Normal(inf_out["beta_m"], inf_out["beta_scale"]),
+        #     Normal(
+        #         self.background_prior_mean,
+        #         torch.exp(0.5 * self.background_prior_log_scale),
+        #     ),
+        # ).sum(dim=-1)
+        # kl_pi = kl(
+        #     Normal(inf_out["pi_alpha"], inf_out["pi_beta"]),
+        #     Normal(self.pi_prior_mean, self.pi_prior_scale),
+        # ).sum(dim=-1)
+
+        prior = (
+            -Normal(
                 self.background_prior_mean,
                 torch.exp(0.5 * self.background_prior_log_scale),
-            ),
-        ).sum(dim=-1)
-        kl_pi = kl(
-            Normal(inf_out["pi_alpha"], inf_out["pi_beta"]),
-            Normal(self.pi_prior_mean, self.pi_prior_scale),
-        ).sum(dim=-1)
+            )
+            .log_prob(torch.log(inf_out["beta"]))
+            .sum(dim=-1)
+        )
 
-        kl_div = kl_z + kl_beta + kl_pi
+        pi_prior = -Normal(0, self.pi_prior_scale).log_prob(pi_logits).sum(dim=-1)
+
+        kl_div = prior + pi_prior
 
         loss = torch.mean(reconst + kl_weight * kl_div)
 
