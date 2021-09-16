@@ -21,6 +21,7 @@ from scvi.dataloaders import (
 )
 from scvi.model import (
     AUTOZI,
+    DEMUXVI,
     MULTIVI,
     PEAKVI,
     SCANVI,
@@ -810,3 +811,14 @@ def test_multivi():
     vae.get_latent_representation()
     vae.differential_accessibility(groupby="labels", group1="label_1")
     vae.differential_expression(groupby="labels", group1="label_1")
+
+
+def test_demuxvi():
+    data = synthetic_iid(run_setup_anndata=False)
+    setup_anndata(data)
+    vae = DEMUXVI(
+        data,
+    )
+    vae.train(2)
+    vae.get_latent_representation()
+    vae.predict_identity()

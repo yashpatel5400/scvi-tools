@@ -1,5 +1,6 @@
 from ._autozi import AUTOZI
 from ._condscvi import CondSCVI
+from ._demuxvi import DEMUXVI
 from ._destvi import DestVI
 from ._linear_scvi import LinearSCVI
 from ._multivi import MULTIVI
@@ -18,4 +19,5 @@ __all__ = [
     "CondSCVI",
     "DestVI",
     "MULTIVI",
+    "DEMUXVI",
 ]

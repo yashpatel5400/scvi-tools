@@ -1045,7 +1045,11 @@ class TOTALVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
         return np.concatenate(background_mean)
 
 
-def _get_totalvi_protein_priors(adata, n_cells=100):
+def _get_totalvi_protein_priors(
+    adata,
+    protein_key: str = _CONSTANTS.PROTEIN_EXP_KEY,
+    n_cells: int = 100,
+):
     """Compute an empirical prior for protein background."""
     import warnings
 
@@ -1067,7 +1071,7 @@ def _get_totalvi_protein_priors(adata, n_cells=100):
             batch_avg_mus.append(0)
             batch_avg_scales.append(1)
             continue
-        pro_exp = get_from_registry(adata, _CONSTANTS.PROTEIN_EXP_KEY)[batch == b]
+        pro_exp = get_from_registry(adata, protein_key)[batch == b]
 
         # for missing batches, put dummy values -- scarches case, will be replaced anyway
         if pro_exp.shape[0] == 0:
