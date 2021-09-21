@@ -170,9 +170,9 @@ class DemuxVAE(BaseModuleClass):
         # )
         prior = 0
 
-        pi_prior = -Normal(0, self.pi_prior_scale).log_prob(pi_logits).sum(dim=-1)
+        pi_prior = -Normal(3, self.pi_prior_scale).log_prob(pi_logits).sum(dim=-1)
 
-        kl_div = prior + pi_prior
+        kl_div = 5 * (prior + pi_prior)
 
         loss = torch.mean(reconst + kl_div)
 
