@@ -164,7 +164,7 @@ class CPATrainingPlan(TrainingPlan):
         # Model update
         else:
             opt.zero_grad()
-            loss = reconstruction_loss.mean() - self.reg_adversary * adv_penalty
+            loss = reconstruction_loss.mean() - self.reg_adversary * adv_loss
             self.manual_backward(loss)
             opt.step()
             # sch.step()
