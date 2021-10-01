@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 from scvi.data import register_tensor_from_anndata
@@ -7,15 +8,15 @@ from scvi.nn import FCLayers
 
 def register_dataset(
     adata,
-    treatment_key,
-    cont_key,
+    treatments_key,
     cat_keys,
+    # cont_key,
 ):
-    register_tensor_from_anndata(adata, "treatment", "obs", treatment_key)
+    register_tensor_from_anndata(adata, "treatments", "obsm", treatments_key)
     batch_keys_to_dim = dict()
-    if cont_key is not None:
-        register_tensor_from_anndata(adata, "cat_continuous", "obsm", cont_key)
-        batch_keys_to_dim = {"cat_continuous": adata.obsm[cont_key].shape[-1]}
+    # if cont_key is not None:
+    #     register_tensor_from_anndata(adata, "cat_continuous", "obsm", cont_key)
+    #     batch_keys_to_dim = {"cat_continuous": adata.obsm[cont_key].shape[-1]}
     for cat in cat_keys:
         new_cat_key = "cat_{}".format(cat)
         register_tensor_from_anndata(
@@ -27,7 +28,7 @@ def register_dataset(
 
 class _CE_CONSTANTS:
     X_KEY = "X"
-    TREATMENT = "treatment"
+    TREATMENTS = "treatments"
     C_KEY = "covariates"
     CAT_COVS_KEY = "cat_covs"
     CONT_COVS_KEY = "cont_covs"
@@ -61,7 +62,42 @@ class DecoderNB(nn.Module):
             nn.Softmax(-1),
         )
 
-    def forward(self, inputs, library, px_r, t):
+    def forward(self, inputs, library, px_r):
         px_scale = self.hidd(inputs)
         px_rate = library.exp() * px_scale
         return NegativeBinomial(mu=px_rate, theta=px_r.exp())
+
+
+class TreatmentEmbedder(nn.Module):
+    """
+    Sigmoid, log-sigmoid or linear functions for encoding dose-response for
+    drug perurbations.
+    """
+
+    def __init__(self, n_latent, n_cats, nonlin="sigmoid"):
+        """Sigmoid modeling of continuous variable.
+        Params
+        ------
+        nonlin : str (default: logsigm)
+            One of logsigm, sigm.
+        """
+        super().__init__()
+        # self.embeddings = nn.Embedding(n_cats, n_latent)
+        self.cats_to_latent_map = nn.Linear(n_cats, n_latent, bias=False)
+        self.nonlin = nonlin
+        self.beta = nn.Parameter(torch.ones(1, n_cats), requires_grad=True)
+        self.bias = nn.Parameter(torch.zeros(1, n_cats), requires_grad=True)
+
+    def get_responses(self, x):
+        if self.nonlin == "logsigm":
+            c0 = self.bias.sigmoid()
+            return (torch.log1p(x) * self.beta + self.bias).sigmoid() - c0
+        elif self.nonlin == "sigm":
+            c0 = self.bias.sigmoid()
+            return (x * self.beta + self.bias).sigmoid() - c0
+        else:
+            return x
+
+    def forward(self, x):
+        ys = self.get_responses(x)  # shape (n_batch, n_treatments)
+        return self.cats_to_latent_map(ys)
