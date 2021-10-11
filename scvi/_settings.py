@@ -1,4 +1,6 @@
+import io
 import logging
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Union
 
@@ -142,7 +144,10 @@ class ScviConfig:
         """Random seed for torch and numpy."""
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-        pl.utilities.seed.seed_everything(seed)
+        f = io.StringIO()
+        with redirect_stdout(f):
+            pl.utilities.seed.seed_everything(seed)
+        scvi_logger.info(f)
         self._seed = seed
 
     @property
