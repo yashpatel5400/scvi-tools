@@ -147,7 +147,7 @@ class ScviConfig:
         f = io.StringIO()
         with redirect_stdout(f):
             pl.utilities.seed.seed_everything(seed)
-        scvi_logger.info(f)
+        scvi_logger.info(f.getvalue())
         self._seed = seed
 
     @property
