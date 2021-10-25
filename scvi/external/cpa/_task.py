@@ -157,7 +157,7 @@ class CPATrainingPlan(TrainingPlan):
         # Adversarial update
         if self.iter_count % self.adversary_steps:
             adv_opt.zero_grad()
-            adv_loss = adv_loss + self.reg_adversary * adv_penalty
+            adv_loss = adv_loss + self.penalty_adversary * adv_penalty
             self.manual_backward(adv_loss)
             # adv_sch.step()
 

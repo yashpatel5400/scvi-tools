@@ -132,5 +132,7 @@ class CPA(UnsupervisedTrainingMixin, BaseModelClass):
             log_scales.append(log_scale.cpu())
         return torch.cat(log_scales, dim=0).numpy()
 
-    def get_embeddings(self, type):
-        pass
+    def get_embeddings(self, dose=1.0):
+        treatments = dose * torch.eye(5, device=self.module.device)
+        embeds = self.module.treatments_embed(treatments).detach().cpu().numpy()
+        return embeds
