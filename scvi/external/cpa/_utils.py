@@ -11,13 +11,23 @@ def register_dataset(
     adata,
     treatments_key,
     cat_keys,
-    # cont_key,
 ):
+    """TEMPORARY.
+
+    Quick and dirty way to construct the dataloader for the CPA model.
+    This function will be replaced once the AnnData refactor is completed within
+    scvi-tools.
+
+    Parameters
+    ----------
+    adata : AnnData
+    treatments_key : str
+        Obsm key for the treatments
+    cat_keys : list
+        List of categorical covariates
+    """
     register_tensor_from_anndata(adata, "treatments", "obsm", treatments_key)
     batch_keys_to_dim = dict()
-    # if cont_key is not None:
-    #     register_tensor_from_anndata(adata, "cat_continuous", "obsm", cont_key)
-    #     batch_keys_to_dim = {"cat_continuous": adata.obsm[cont_key].shape[-1]}
     for cat in cat_keys:
         new_cat_key = "cat_{}".format(cat)
         register_tensor_from_anndata(
@@ -96,6 +106,7 @@ class DecoderGauss(nn.Module):
         locs = self.mean_(hidd_)
         variances = self.var_(hidd_).exp().add(1).log().add(1e-3)
         return Normal(loc=locs, scale=variances.sqrt())
+
 
 class TreatmentEmbedder(nn.Module):
     """

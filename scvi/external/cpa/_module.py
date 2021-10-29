@@ -1,14 +1,13 @@
 import torch
-import torch.nn as nn
-from torch.nn.functional import one_hot
 import torch.distributions as db
+import torch.nn as nn
+from torch.distributions.kl import kl_divergence
+from torch.nn.functional import one_hot
 
 from scvi.module.base import BaseModuleClass, auto_move_data
-from scvi.nn import FCLayers, Encoder
-from torch.distributions.kl import kl_divergence
+from scvi.nn import Encoder, FCLayers
 
-
-from ._utils import _CE_CONSTANTS, DecoderNB, DecoderGauss, TreatmentEmbedder
+from ._utils import _CE_CONSTANTS, DecoderGauss, DecoderNB, TreatmentEmbedder
 
 
 class CPAModule(BaseModuleClass):
@@ -199,6 +198,7 @@ class CPAModule(BaseModuleClass):
         )
 
     def loss(self, tensors, inference_outputs, generative_outputs):
+        """Computes the reconstruction loss (AE) or the ELBO (VAE)"""
         x = inference_outputs["x"]
         # Reconstruction loss & regularizations
         dist_px = generative_outputs["dist_px"]
@@ -228,6 +228,16 @@ class CPAModule(BaseModuleClass):
         return loss
 
     def get_expression(self, tensors, **inference_kwargs):
+        """Computes gene expression means and std.
+
+        Only implemented for the gaussian likelihood.
+
+        Parameters
+        ----------
+        tensors : dict
+            Considered inputs
+
+        """
         _, generative_outputs, = self.forward(
             tensors,
             compute_loss=False,
@@ -239,15 +249,3 @@ class CPAModule(BaseModuleClass):
             return mus, stds
         else:
             raise ValueError
-
-
-    # def get_log_scale(self, tensors, **inference_kwargs):
-    #     inference_outputs, generative_outputs, = self.forward(
-    #         tensors,
-    #         compute_loss=False,
-    #         inference_kwargs=inference_kwargs,
-    #     )
-    #     if self.loss_ae == "gauss":
-    #     log_px_rate = generative_outputs["dist_px"].mu.log2()
-    #     # px_scale = log_px_rate - inference_outputs["library"].exp().log2()
-    #     return px_scale

@@ -38,6 +38,7 @@ class CPATrainingPlan(TrainingPlan):
         adversary_wd=1e-2,
         autoencoder_wd=1e-2,
     ):
+        """Training plan for the CPA model"""
         super().__init__(
             module=module,
             lr=lr,
@@ -84,6 +85,13 @@ class CPATrainingPlan(TrainingPlan):
         self.step_size_lr = step_size_lr
 
     def _adversarial_classifications(self, z_basal):
+        """Computes adversarial classifier predictions
+
+        Parameters
+        ----------
+        z_basal : tensor
+            Basal states
+        """
         pred_treatments = self.treatments_adv_nn(z_basal)
         pred_covariates = dict()
         for cat_cov_name in self.module.cat_to_ncats:
@@ -93,6 +101,7 @@ class CPATrainingPlan(TrainingPlan):
         return pred_treatments, pred_covariates
 
     def adversarial_losses(self, tensors, inference_outputs, generative_outputs):
+        """Computes adversarial classification losses and regularizations"""
         z_basal = inference_outputs["z_basal"]
         treatments = tensors["treatments"]
         c_dict = inference_outputs["c_dict"]
@@ -137,9 +146,6 @@ class CPATrainingPlan(TrainingPlan):
         )
 
     def configure_optimizers(self):
-        # adversary_lr
-        # dosers_lr
-        # autoencoder_wd
         params1 = filter(lambda p: p.requires_grad, self.module.parameters())
         optimizer1 = torch.optim.Adam(
             params1, lr=self.lr, eps=self.autoencoder_wd, weight_decay=self.weight_decay
@@ -166,7 +172,6 @@ class CPATrainingPlan(TrainingPlan):
 
     def training_step(self, batch, batch_idx):
         opt, adv_opt = self.optimizers()
-        # sch, adv_sch = self.lr_schedulers()
 
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
         reconstruction_loss = self.module.loss(
@@ -194,18 +199,16 @@ class CPATrainingPlan(TrainingPlan):
             loss = reconstruction_loss.mean() - self.reg_adversary * adv_loss
             self.manual_backward(loss)
             opt.step()
-            # sch.step()
 
         self.iter_count += 1
         return dict(
             reconstruction_loss=reconstruction_loss.mean(),
             adv_loss=adv_loss,
             adv_penalty=adv_penalty,
-            # n_obs=reconstruction_loss.shape[0],
         )
 
     def training_epoch_end(self, outputs):
-        reconstruction_loss, adv_loss, adv_penalty, n_obs = 0, 0, 0, 0
+        reconstruction_loss, adv_loss, adv_penalty = 0, 0, 0
         for tensors in outputs:
             reconstruction_loss += tensors["reconstruction_loss"]
             adv_loss += tensors["adv_loss"]
@@ -242,7 +245,7 @@ class CPATrainingPlan(TrainingPlan):
         )
 
     def validation_epoch_end(self, outputs):
-        reconstruction_loss, adv_loss, adv_penalty, n_obs = 0, 0, 0, 0
+        reconstruction_loss, adv_loss, adv_penalty = 0, 0, 0
         for tensors in outputs:
             reconstruction_loss += tensors["reconstruction_loss"]
             adv_loss += tensors["adv_loss"]
