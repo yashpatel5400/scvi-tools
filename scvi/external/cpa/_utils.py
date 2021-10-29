@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.distributions import Normal
 
 from scvi.data import register_tensor_from_anndata
 from scvi.distributions import NegativeBinomial
@@ -67,6 +68,34 @@ class DecoderNB(nn.Module):
         px_rate = library.exp() * px_scale
         return NegativeBinomial(mu=px_rate, theta=px_r.exp())
 
+
+class DecoderGauss(nn.Module):
+    def __init__(
+        self,
+        n_input,
+        n_output,
+        n_hidden,
+        n_layers,
+        use_layer_norm=True,
+        use_batch_norm=False,
+    ):
+        super().__init__()
+        self.hidd = FCLayers(
+            n_in=n_input,
+            n_out=n_hidden,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            use_layer_norm=use_layer_norm,
+            use_batch_norm=use_batch_norm,
+        )
+        self.var_ = nn.Linear(n_hidden, n_output)
+        self.mean_ = nn.Linear(n_hidden, n_output)
+
+    def forward(self, inputs, library, px_r):
+        hidd_ = self.hidd(inputs)
+        locs = self.mean_(hidd_)
+        variances = self.var_(hidd_).exp().add(1).log().add(1e-3)
+        return Normal(loc=locs, scale=variances.sqrt())
 
 class TreatmentEmbedder(nn.Module):
     """

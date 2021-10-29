@@ -2,6 +2,7 @@ from typing import Union
 
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import StepLR
 
 from scvi._compat import Literal
 from scvi.module.base import BaseModuleClass
@@ -28,7 +29,14 @@ class CPATrainingPlan(TrainingPlan):
         adversary_steps: int = 3,
         reg_adversary: int = 5,
         penalty_adversary: int = 3,
-        **adversarial_models_kwargs,
+        adversary_width: float = 64,
+        adversary_lr=1e-3,
+        # dosers_lr=1e-3,
+        # autoencoder_wd=1e-3,
+        adversary_depth: float = 2,
+        step_size_lr: int = 15,
+        adversary_wd=1e-2,
+        autoencoder_wd=1e-2,
     ):
         super().__init__(
             module=module,
@@ -43,6 +51,16 @@ class CPATrainingPlan(TrainingPlan):
             lr_scheduler_metric=lr_scheduler_metric,
             lr_min=lr_min,
         )
+
+        adversarial_models_kwargs = dict(
+            n_hidden=adversary_width,
+            n_layers=adversary_depth,
+        )
+        self.adversary_lr = adversary_lr
+        self.adversary_wd = adversary_wd
+        self.autoencoder_wd = autoencoder_wd
+        # self.dosers_lr = dosers_lr
+        # self.autoencoder_wd = autoencoder_wd
 
         # Adversarial modules and hparams
         self.covariates_adv_nn = nn.ModuleDict(
@@ -63,6 +81,7 @@ class CPATrainingPlan(TrainingPlan):
         self.automatic_optimization = False
         self.iter_count = 0
         self.adversary_steps = adversary_steps
+        self.step_size_lr = step_size_lr
 
     def _adversarial_classifications(self, z_basal):
         pred_treatments = self.treatments_adv_nn(z_basal)
@@ -118,24 +137,32 @@ class CPATrainingPlan(TrainingPlan):
         )
 
     def configure_optimizers(self):
+        # adversary_lr
+        # dosers_lr
+        # autoencoder_wd
         params1 = filter(lambda p: p.requires_grad, self.module.parameters())
         optimizer1 = torch.optim.Adam(
-            params1, lr=self.lr, eps=0.01, weight_decay=self.weight_decay
+            params1, lr=self.lr, eps=self.autoencoder_wd, weight_decay=self.weight_decay
         )
-        config1 = {"optimizer": optimizer1}
         params2 = filter(
             lambda p: p.requires_grad,
             list(self.covariates_adv_nn.parameters())
             + list(self.treatments_adv_nn.parameters()),
         )
         optimizer2 = torch.optim.Adam(
-            params2, lr=1e-3, eps=0.01, weight_decay=self.weight_decay
+            params2,
+            lr=self.adversary_lr,
+            eps=self.adversary_wd,
+            weight_decay=self.weight_decay,
         )
-        config2 = {
-            "optimizer": optimizer2,
-            # "lr_scheduler": StepLR(optimizer2, step_size=45),
-        }
-        return [config1, config2]
+        optims = [optimizer1, optimizer2]
+        if self.step_size_lr is not None:
+            scheduler1 = StepLR(optimizer1, step_size=self.step_size_lr)
+            scheduler2 = StepLR(optimizer2, step_size=self.step_size_lr)
+            schedulers = [scheduler1, scheduler2]
+            return optims, schedulers
+        else:
+            return optims
 
     def training_step(self, batch, batch_idx):
         opt, adv_opt = self.optimizers()
@@ -159,7 +186,7 @@ class CPATrainingPlan(TrainingPlan):
             adv_opt.zero_grad()
             adv_loss = adv_loss + self.penalty_adversary * adv_penalty
             self.manual_backward(adv_loss)
-            # adv_sch.step()
+            adv_opt.step()
 
         # Model update
         else:
@@ -171,10 +198,10 @@ class CPATrainingPlan(TrainingPlan):
 
         self.iter_count += 1
         return dict(
-            reconstruction_loss=reconstruction_loss.sum(),
+            reconstruction_loss=reconstruction_loss.mean(),
             adv_loss=adv_loss,
             adv_penalty=adv_penalty,
-            n_obs=reconstruction_loss.shape[0],
+            # n_obs=reconstruction_loss.shape[0],
         )
 
     def training_epoch_end(self, outputs):
@@ -183,11 +210,15 @@ class CPATrainingPlan(TrainingPlan):
             reconstruction_loss += tensors["reconstruction_loss"]
             adv_loss += tensors["adv_loss"]
             adv_penalty += tensors["adv_penalty"]
-            n_obs += tensors["n_obs"]
+            # n_obs += tensors["n_obs"]
         # kl global same for each minibatch
-        self.log("reconstruction_loss_train", reconstruction_loss.sum() / n_obs)
-        self.log("adv_loss_train", adv_penalty / n_obs)
+        self.log("reconstruction_loss_train", reconstruction_loss.mean())
+        self.log("adv_loss_train", adv_penalty)
         self.log("adv_penalty_train", adv_penalty)
+        if self.step_size_lr:
+            sch, adv_sch = self.lr_schedulers()
+            sch.step()
+            adv_sch.step()
 
     def validation_step(self, batch, batch_idx):
         inf_outputs, gen_outputs = self.module.forward(batch, compute_loss=False)
@@ -204,10 +235,10 @@ class CPATrainingPlan(TrainingPlan):
         adv_loss = losses["adv_loss"]
         adv_penalty = losses["adv_penalty"]
         return dict(
-            reconstruction_loss=reconstruction_loss.sum(),
+            reconstruction_loss=reconstruction_loss.mean(),
             adv_loss=adv_loss,
             adv_penalty=adv_penalty,
-            n_obs=reconstruction_loss.shape[0],
+            # n_obs=reconstruction_loss.shape[0],
         )
 
     def validation_epoch_end(self, outputs):
@@ -216,8 +247,8 @@ class CPATrainingPlan(TrainingPlan):
             reconstruction_loss += tensors["reconstruction_loss"]
             adv_loss += tensors["adv_loss"]
             adv_penalty += tensors["adv_penalty"]
-            n_obs += tensors["n_obs"]
+            # n_obs += tensors["n_obs"]
         # kl global same for each minibatch
-        self.log("reconstruction_loss_validation", reconstruction_loss.sum() / n_obs)
-        self.log("adv_loss_validation", adv_penalty / n_obs)
+        self.log("reconstruction_loss_validation", reconstruction_loss.mean())
+        self.log("adv_loss_validation", adv_penalty)
         self.log("adv_penalty_validation", adv_penalty)

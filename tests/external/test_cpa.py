@@ -45,10 +45,25 @@ def test_cpa():
     model = CPA(
         adata=dataset,
         batch_keys_to_dim=batch_keys_to_dim,
+        loss_ae="gauss",
+        variational=True,
     )
     model.train(max_epochs=3, plan_kwargs=dict(lr=1e-4))
+    model.predict()
+
+    keys = np.array(["test", "train", "ood"])
+    dataset.obs.loc[:, "split"] = keys[
+        np.random.randint(0, 3, size=(dataset.shape[0],))
+    ]
+    model = CPA(
+        adata=dataset,
+        batch_keys_to_dim=batch_keys_to_dim,
+        loss_ae="nb",
+        split_key="split",
+    )
+    model.train(max_epochs=3, plan_kwargs=dict(lr=1e-4))
+
     model.get_reconstruction_error(adata=dataset, indices=[1, 2, 3, 4])
     model.get_latent_representation()
 
     cf_treatments = torch.Tensor([1, 0, 0, 0, 0])
-    model.predict(treatments=cf_treatments)
