@@ -106,9 +106,9 @@ class RNADeconv(BaseModuleClass):
         scaling_factor = generative_outputs["scaling_factor"]
 
         reconst_loss = -NegativeBinomial(px_rate, logits=px_o).log_prob(x).sum(-1)
-        loss = torch.mean(scaling_factor * reconst_loss)
+        loss = torch.sum(scaling_factor * reconst_loss)
 
-        return LossRecorder(loss, reconst_loss, torch.zeros((1,)), 0.0)
+        return LossRecorder(loss, reconst_loss, torch.zeros((1,)), torch.tensor(0.0))
 
     @torch.no_grad()
     def sample(
@@ -246,3 +246,21 @@ class SpatialDeconv(BaseModuleClass):
         library_size=1,
     ):
         raise NotImplementedError("No sampling method for Stereoscope")
+
+    @torch.no_grad()
+    @auto_move_data
+    def get_ct_specific_expression(self, y):
+        """
+        Returns cell type specific gene expression at the queried spots.
+
+        Parameters
+        ----------
+        y
+            cell types
+        """
+        # cell-type specific gene expression. Conceptually of shape (minibatch, celltype, gene).
+        # But in this case, it's the same for all spots with the same cell type
+        beta = torch.nn.functional.softplus(self.beta)  # n_genes
+        w = torch.nn.functional.softplus(self.W)  # n_genes, n_cell_types
+        px_ct = torch.exp(self.px_o).unsqueeze(1) * beta.unsqueeze(1) * w
+        return px_ct[:, y.long()[:, 0]].T  # shape (minibatch, genes)

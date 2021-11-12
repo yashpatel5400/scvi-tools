@@ -29,14 +29,19 @@ class LossRecorder:
         KL divergence associated with each observation in the minibatch.
     kl_global
         Global kl divergence term. Should be one dimensional with one value.
+    **kwargs
+        Additional metrics can be passed as keyword arguments and will
+        be available as attributes of the object.
     """
 
     def __init__(
         self,
         loss: Union[Dict[str, torch.Tensor], torch.Tensor],
-        reconstruction_loss: Union[Dict[str, torch.Tensor], torch.Tensor],
-        kl_local: Union[Dict[str, torch.Tensor], torch.Tensor],
-        kl_global: Union[Dict[str, torch.Tensor], torch.Tensor] = torch.Tensor([0]),
+        reconstruction_loss: Union[
+            Dict[str, torch.Tensor], torch.Tensor
+        ] = torch.tensor(0.0),
+        kl_local: Union[Dict[str, torch.Tensor], torch.Tensor] = torch.tensor(0.0),
+        kl_global: Union[Dict[str, torch.Tensor], torch.Tensor] = torch.tensor(0.0),
         **kwargs,
     ):
         self._loss = loss if isinstance(loss, dict) else dict(loss=loss)
@@ -85,6 +90,13 @@ class BaseModuleClass(nn.Module):
         self,
     ):
         super().__init__()
+
+    @property
+    def device(self):
+        device = list(set(p.device for p in self.parameters()))
+        if len(device) > 1:
+            raise RuntimeError("Module tensors on multiple devices.")
+        return device[0]
 
     @auto_move_data
     def forward(
@@ -171,6 +183,7 @@ class BaseModuleClass(nn.Module):
 
         This function should return a dictionary with str keys and :class:`~torch.Tensor` values.
         """
+        pass
 
     @abstractmethod
     def generative(self, *args, **kwargs) -> dict:
@@ -182,6 +195,7 @@ class BaseModuleClass(nn.Module):
 
         This function should return a dictionary with str keys and :class:`~torch.Tensor` values.
         """
+        pass
 
     @abstractmethod
     def loss(self, *args, **kwargs) -> LossRecorder:
@@ -193,10 +207,12 @@ class BaseModuleClass(nn.Module):
 
         This function should return an object of type :class:`~scvi.module.base.LossRecorder`.
         """
+        pass
 
     @abstractmethod
     def sample(self, *args, **kwargs):
         """Generate samples from the learned model."""
+        pass
 
 
 def _get_dict_if_none(param):
@@ -256,6 +272,22 @@ class PyroBaseModuleClass(nn.Module):
     def guide(self):
         pass
 
+    @property
+    def list_obs_plate_vars(self):
+        """
+        Model annotation for minibatch training with pyro plate.
+
+        A dictionary with:
+        1. "name" - the name of observation/minibatch plate;
+        2. "in" - indexes of model args to provide to encoder network when using amortised inference;
+        3. "sites" - dictionary with
+            keys - names of variables that belong to the observation plate (used to recognise
+             and merge posterior samples for minibatch variables)
+            values - the dimensions in non-plate axis of each variable (used to construct output
+             layer of encoder network when using amortised inference)
+        """
+        return {"name": "", "in": [], "sites": {}}
+
     def create_predictive(
         self,
         model: Optional[Callable] = None,
@@ -289,7 +321,6 @@ class PyroBaseModuleClass(nn.Module):
             in an outermost `plate` messenger. Note that this requires that the model has
             all batch dims correctly annotated via :class:`~pyro.plate`. Default is `False`.
         """
-
         if model is None:
             model = self.model
         if guide is None:

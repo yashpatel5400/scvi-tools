@@ -1,96 +1,26 @@
 import logging
-from typing import Tuple, Union
+from typing import Union
 
 import anndata
-import numba
+import h5py
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp_sparse
+from anndata._core.sparse_dataset import SparseDataset
+from numba import boolean, float32, float64, int32, int64, vectorize
 
 logger = logging.getLogger(__name__)
 
 
-def _compute_library_size(
-    data: Union[sp_sparse.spmatrix, np.ndarray]
-) -> Tuple[np.ndarray, np.ndarray]:
-    sum_counts = data.sum(axis=1)
-    masked_log_sum = np.ma.log(sum_counts)
-    if np.ma.is_masked(masked_log_sum):
-        logger.warning(
-            "This dataset has some empty cells, this might fail inference."
-            "Data should be filtered with `scanpy.pp.filter_cells()`"
-        )
-    log_counts = masked_log_sum.filled(0)
-    local_mean = (np.mean(log_counts).reshape(-1, 1)).astype(np.float32)
-    local_var = (np.var(log_counts).reshape(-1, 1)).astype(np.float32)
-    return local_mean, local_var
-
-
-def _compute_library_size_batch(
-    adata,
-    batch_key: str,
-    local_l_mean_key: str = None,
-    local_l_var_key: str = None,
-    layer=None,
-    copy: bool = False,
-):
-    """
-    Computes the library size.
-
-    Parameters
-    ----------
-    adata
-        anndata object containing counts
-    batch_key
-        key in obs for batch information
-    local_l_mean_key
-        key in obs to save the local log mean
-    local_l_var_key
-        key in obs to save the local log variance
-    layer
-        if not None, will use this in adata.layers[] for X
-    copy
-        if True, returns a copy of the adata
-
-    Returns
-    -------
-    type
-        anndata.AnnData if copy was True, else None
-
-    """
-    if batch_key not in adata.obs_keys():
-        raise ValueError("batch_key not valid key in obs dataframe")
-    local_means = np.zeros((adata.shape[0], 1))
-    local_vars = np.zeros((adata.shape[0], 1))
-    batch_indices = adata.obs[batch_key]
-    for i_batch in np.unique(batch_indices):
-        idx_batch = np.squeeze(batch_indices == i_batch)
-        if layer is not None:
-            if layer not in adata.layers.keys():
-                raise ValueError("layer not a valid key for adata.layers")
-            data = adata[idx_batch].layers[layer]
-        else:
-            data = adata[idx_batch].X
-        (local_means[idx_batch], local_vars[idx_batch]) = _compute_library_size(data)
-    if local_l_mean_key is None:
-        local_l_mean_key = "_scvi_local_l_mean"
-    if local_l_var_key is None:
-        local_l_var_key = "_scvi_local_l_var"
-
-    if copy:
-        copy = adata.copy()
-        copy.obs[local_l_mean_key] = local_means
-        copy.obs[local_l_var_key] = local_vars
-        return copy
-    else:
-        adata.obs[local_l_mean_key] = local_means
-        adata.obs[local_l_var_key] = local_vars
-
-
 def _check_nonnegative_integers(
-    data: Union[pd.DataFrame, np.ndarray, sp_sparse.spmatrix]
+    data: Union[pd.DataFrame, np.ndarray, sp_sparse.spmatrix, h5py.Dataset]
 ):
     """Approximately checks values of data to ensure it is count data."""
+
+    # for backed anndata
+    if isinstance(data, h5py.Dataset) or isinstance(data, SparseDataset):
+        data = data[:100]
+
     if isinstance(data, np.ndarray):
         data = data
     elif issubclass(type(data), sp_sparse.spmatrix):
@@ -100,16 +30,24 @@ def _check_nonnegative_integers(
     else:
         raise TypeError("data type not understood")
 
-    check = data[:10]
-    return _check_is_counts(check)
+    n = len(data)
+    inds = np.random.permutation(n)[:20]
+    check = data.flat[inds]
+    return ~np.any(_is_not_count(check))
 
 
-@numba.njit(cache=True)
-def _check_is_counts(data):
-    for d in data.flat:
-        if d < 0 or d % 1 != 0:
-            return False
-    return True
+@vectorize(
+    [
+        boolean(int32),
+        boolean(int64),
+        boolean(float32),
+        boolean(float64),
+    ],
+    target="parallel",
+    cache=True,
+)
+def _is_not_count(d):
+    return d < 0 or d % 1 != 0
 
 
 def _get_batch_mask_protein_data(

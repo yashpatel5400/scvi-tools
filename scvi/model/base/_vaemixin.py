@@ -79,7 +79,7 @@ class VAEMixin:
         if hasattr(self.module, "marginal_ll"):
             log_lkl = 0
             for tensors in scdl:
-                log_lkl = self.module.marginal_ll(tensors, n_mc_samples=n_mc_samples)
+                log_lkl += self.module.marginal_ll(tensors, n_mc_samples=n_mc_samples)
         else:
             raise NotImplementedError(
                 "marginal_ll is not implemented for current model. "
@@ -152,8 +152,7 @@ class VAEMixin:
         latent_representation : np.ndarray
             Low-dimensional representation for each cell
         """
-        if self.is_trained_ is False:
-            raise RuntimeError("Please train the model first.")
+        self._check_if_trained(warn=False)
 
         adata = self._validate_anndata(adata)
         scdl = self._make_data_loader(
@@ -177,4 +176,4 @@ class VAEMixin:
                     z = qz_m
 
             latent += [z.cpu()]
-        return np.array(torch.cat(latent))
+        return torch.cat(latent).numpy()

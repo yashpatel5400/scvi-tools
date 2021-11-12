@@ -1,13 +1,19 @@
+import logging
 from typing import Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+import torch
 from anndata import AnnData
 
 from scvi._compat import Literal
 from scvi.data import register_tensor_from_anndata
+from scvi.data._anndata import _setup_anndata
 from scvi.external.stereoscope._module import RNADeconv, SpatialDeconv
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin
+from scvi.utils import setup_anndata_dsp
+
+logger = logging.getLogger(__name__)
 
 
 class RNAStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
@@ -19,14 +25,14 @@ class RNAStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
     Parameters
     ----------
     sc_adata
-        single-cell AnnData object that has been registered via :func:`~scvi.data.setup_anndata`.
+        single-cell AnnData object that has been registered via :meth:`~scvi.external.RNAStereoscope.setup_anndata`.
     **model_kwargs
         Keyword args for :class:`~scvi.external.stereoscope.RNADeconv`
 
     Examples
     --------
     >>> sc_adata = anndata.read_h5ad(path_to_sc_anndata)
-    >>> scvi.data.setup_anndata(sc_adata, labels_key="labels")
+    >>> scvi.external.RNAStereoscope.setup_anndata(sc_adata, labels_key="labels")
     >>> stereo = scvi.external.stereoscope.RNAStereoscope(sc_adata)
     >>> stereo.train()
     """
@@ -75,7 +81,7 @@ class RNAStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
             Learning rate for optimization.
         use_gpu
             Use default GPU if available (if None or True), or index of GPU to use (if int),
-            or name of GPU (if str), or use CPU (if False).
+            or name of GPU (if str, e.g., `'cuda:0'`), or use CPU (if False).
         train_size
             Size of training set in the range [0.0, 1.0].
         validation_size
@@ -106,6 +112,35 @@ class RNAStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
             **kwargs,
         )
 
+    @staticmethod
+    @setup_anndata_dsp.dedent
+    def setup_anndata(
+        adata: AnnData,
+        labels_key: str,
+        layer: Optional[str] = None,
+        copy: bool = False,
+    ) -> Optional[AnnData]:
+        """
+        %(summary)s.
+
+        Parameters
+        ----------
+        %(param_adata)s
+        %(param_labels_key)s
+        %(param_layer)s
+        %(param_copy)s
+
+        Returns
+        -------
+        %(returns)s
+        """
+        return _setup_anndata(
+            adata,
+            labels_key=labels_key,
+            layer=layer,
+            copy=copy,
+        )
+
 
 class SpatialStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
     """
@@ -116,7 +151,7 @@ class SpatialStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
     Parameters
     ----------
     st_adata
-        spatial transcriptomics AnnData object that has been registered via :func:`~scvi.data.setup_anndata`.
+        spatial transcriptomics AnnData object that has been registered via :meth:`~scvi.external.SpatialStereoscope.setup_anndata`.
     sc_params
         parameters of the model learned from the single-cell RNA seq data for deconvolution.
     cell_type_mapping
@@ -130,11 +165,11 @@ class SpatialStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
     Examples
     --------
     >>> sc_adata = anndata.read_h5ad(path_to_sc_anndata)
-    >>> scvi.data.setup_anndata(sc_adata, labels_key="labels")
+    >>> scvi.external.RNAStereoscope.setup_anndata(sc_adata, labels_key="labels")
     >>> sc_model = scvi.external.stereoscope.RNAStereoscope(sc_adata)
     >>> sc_model.train()
     >>> st_adata = anndata.read_h5ad(path_to_st_anndata)
-    >>> scvi.data.setup_anndata(st_adata)
+    >>> scvi.external.SpatialStereoscope.setup_anndata(st_adata)
     >>> stereo = scvi.external.stereoscope.SpatialStereoscope.from_rna_model(st_adata, sc_model)
     >>> stereo.train()
     >>> st_adata.obsm["deconv"] = stereo.get_proportions()
@@ -204,7 +239,7 @@ class SpatialStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
             **model_kwargs,
         )
 
-    def get_proportions(self, keep_noise=False) -> np.ndarray:
+    def get_proportions(self, keep_noise=False) -> pd.DataFrame:
         """
         Returns the estimated cell type proportion for the spatial data.
 
@@ -215,6 +250,8 @@ class SpatialStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
         keep_noise
             whether to account for the noise term as a standalone cell type in the proportion estimate.
         """
+        self._check_if_trained()
+
         column_names = self.cell_type_mapping
         if keep_noise:
             column_names = column_names.append("noise_term")
@@ -223,6 +260,30 @@ class SpatialStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
             columns=column_names,
             index=self.adata.obs.index,
         )
+
+    def get_scale_for_ct(
+        self,
+        y: np.ndarray,
+    ) -> np.ndarray:
+        r"""
+        Calculate the cell type specific expression.
+
+        Parameters
+        ----------
+        y
+            numpy array containing the list of cell types
+        Returns
+        -------
+        gene_expression
+        """
+        self._check_if_trained()
+        ind_y = np.array([np.where(ct == self.cell_type_mapping)[0][0] for ct in y])
+        if ind_y.shape != y.shape:
+            raise ValueError(
+                "Incorrect shape after matching cell types to reference mapping. Please check cell type query."
+            )
+        px_scale = self.module.get_ct_specific_expression(torch.tensor(ind_y)[:, None])
+        return np.array(px_scale.cpu())
 
     def train(
         self,
@@ -244,7 +305,7 @@ class SpatialStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
             Learning rate for optimization.
         use_gpu
             Use default GPU if available (if None or True), or index of GPU to use (if int),
-            or name of GPU (if str), or use CPU (if False).
+            or name of GPU (if str, e.g., `'cuda:0'`), or use CPU (if False).
         batch_size
             Minibatch size to use during training.
         plan_kwargs
@@ -268,4 +329,30 @@ class SpatialStereoscope(UnsupervisedTrainingMixin, BaseModelClass):
             batch_size=batch_size,
             plan_kwargs=plan_kwargs,
             **kwargs,
+        )
+
+    @staticmethod
+    @setup_anndata_dsp.dedent
+    def setup_anndata(
+        adata: AnnData,
+        layer: Optional[str] = None,
+        copy: bool = False,
+    ) -> Optional[AnnData]:
+        """
+        %(summary)s.
+
+        Parameters
+        ----------
+        %(param_adata)s
+        %(param_layer)s
+        %(param_copy)s
+
+        Returns
+        -------
+        %(returns)s
+        """
+        return _setup_anndata(
+            adata,
+            layer=layer,
+            copy=copy,
         )

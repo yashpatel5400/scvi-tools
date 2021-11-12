@@ -1,5 +1,6 @@
 import logging
-from typing import Optional, Sequence, Union
+import warnings
+from typing import List, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -9,15 +10,17 @@ from pandas.api.types import CategoricalDtype
 
 from scvi import _CONSTANTS
 from scvi._compat import Literal
-from scvi.data._anndata import _make_obs_column_categorical
+from scvi.data._anndata import _make_obs_column_categorical, _setup_anndata
 from scvi.dataloaders import (
     AnnDataLoader,
     SemiSupervisedDataLoader,
     SemiSupervisedDataSplitter,
 )
+from scvi.model._utils import _init_library_size
 from scvi.module import SCANVAE
 from scvi.train import SemiSupervisedTrainingPlan, TrainRunner
 from scvi.train._callbacks import SubSampleLabels
+from scvi.utils import setup_anndata_dsp
 
 from ._scvi import SCVI
 from .base import ArchesMixin, BaseModelClass, RNASeqMixin, VAEMixin
@@ -34,7 +37,7 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
     Parameters
     ----------
     adata
-        AnnData object that has been registered via :func:`~scvi.data.setup_anndata`.
+        AnnData object that has been registered via :meth:`~scvi.model.SCANVI.setup_anndata`.
     unlabeled_category
         Value used for unlabeled cells in `labels_key` used to setup AnnData with scvi.
     n_hidden
@@ -64,7 +67,7 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
     Examples
     --------
     >>> adata = anndata.read_h5ad(path_to_anndata)
-    >>> scvi.data.setup_anndata(adata, batch_key="batch", labels_key="labels")
+    >>> scvi.model.SCANVI.setup_anndata(adata, batch_key="batch", labels_key="labels")
     >>> vae = scvi.model.SCANVI(adata, "Unknown")
     >>> vae.train()
     >>> adata.obsm["X_scVI"] = vae.get_latent_representation()
@@ -113,9 +116,13 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
             if "extra_categoricals" in self.scvi_setup_dict_
             else None
         )
+
+        n_batch = self.summary_stats["n_batch"]
+        library_log_means, library_log_vars = _init_library_size(adata, n_batch)
+
         self.module = SCANVAE(
             n_input=self.summary_stats["n_vars"],
-            n_batch=self.summary_stats["n_batch"],
+            n_batch=n_batch,
             n_labels=n_labels,
             n_continuous_cov=self.summary_stats["n_continuous_covs"],
             n_cats_per_cov=n_cats_per_cov,
@@ -125,6 +132,8 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
             dropout_rate=dropout_rate,
             dispersion=dispersion,
             gene_likelihood=gene_likelihood,
+            library_log_means=library_log_means,
+            library_log_vars=library_log_vars,
             **scanvae_model_kwargs,
         )
 
@@ -144,6 +153,7 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
             gene_likelihood,
         )
         self.init_params_ = self._get_init_params(locals())
+        self.was_pretrained = False
 
     @classmethod
     def from_scvi_model(
@@ -163,12 +173,13 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
         unlabeled_category
             Value used for unlabeled cells in `labels_key` used to setup AnnData with scvi.
         adata
-            AnnData object that has been registered via :func:`~scvi.data.setup_anndata`.
+            AnnData object that has been registered via :meth:`~scvi.model.SCANVI.setup_anndata`.
         scanvi_kwargs
             kwargs for scanVI model
         """
-        if scvi_model.is_trained_ is False:
-            logger.warning("Passed in scvi model hasn't been trained yet.")
+        scvi_model._check_if_trained(
+            message="Passed in scvi model hasn't been trained yet."
+        )
 
         scanvi_kwargs = dict(scanvi_kwargs)
         init_params = scvi_model.init_params_
@@ -177,7 +188,7 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
         kwargs = {k: v for (i, j) in kwargs.items() for (k, v) in j.items()}
         for k, v in {**non_kwargs, **kwargs}.items():
             if k in scanvi_kwargs.keys():
-                logger.warning(
+                warnings.warn(
                     "Ignoring param '{}' as it was already passed in to ".format(k)
                     + "pretrained scvi model with value {}.".format(v)
                 )
@@ -191,6 +202,7 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
         )
         scvi_state_dict = scvi_model.module.state_dict()
         scanvi_model.module.load_state_dict(scvi_state_dict, strict=False)
+        scanvi_model.was_pretrained = True
 
         return scanvi_model
 
@@ -252,7 +264,7 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
         Parameters
         ----------
         adata
-            AnnData object that has been registered via :func:`~scvi.data.setup_anndata`.
+            AnnData object that has been registered via :meth:`~scvi.model.SCANVI.setup_anndata`.
         indices
             Return probabilities for each class label.
         soft
@@ -279,7 +291,7 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
                 pred = pred.argmax(dim=1)
             y_pred.append(pred.detach().cpu())
 
-        y_pred = np.array(torch.cat(y_pred))
+        y_pred = torch.cat(y_pred).numpy()
         if not soft:
             predictions = []
             for p in y_pred:
@@ -293,7 +305,7 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
                 columns=self._label_mapping[:n_labels],
                 index=adata.obs_names[indices],
             )
-            return y_pred
+            return pred
 
     def train(
         self,
@@ -330,7 +342,7 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
             Minibatch size to use during training.
         use_gpu
             Use default GPU if available (if None or True), or index of GPU to use (if int),
-            or name of GPU (if str), or use CPU (if False).
+            or name of GPU (if str, e.g., `'cuda:0'`), or use CPU (if False).
         plan_kwargs
             Keyword args for :class:`~scvi.train.SemiSupervisedTrainingPlan`. Keyword arguments passed to
             `train()` will overwrite values present in `plan_kwargs`, when appropriate.
@@ -341,6 +353,9 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
         if max_epochs is None:
             n_cells = self.adata.n_obs
             max_epochs = np.min([round((20000 / n_cells) * 400), 400])
+
+            if self.was_pretrained:
+                max_epochs = int(np.min([10, np.max([2, round(max_epochs / 3.0)])]))
 
         logger.info("Training for {} epochs.".format(max_epochs))
 
@@ -376,3 +391,41 @@ class SCANVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
             **trainer_kwargs,
         )
         return runner()
+
+    @staticmethod
+    @setup_anndata_dsp.dedent
+    def setup_anndata(
+        adata: AnnData,
+        labels_key: str,
+        batch_key: Optional[str] = None,
+        layer: Optional[str] = None,
+        categorical_covariate_keys: Optional[List[str]] = None,
+        continuous_covariate_keys: Optional[List[str]] = None,
+        copy: bool = False,
+    ) -> Optional[AnnData]:
+        """
+        %(summary)s.
+
+        Parameters
+        ----------
+        %(param_adata)s
+        %(param_labels_key)s
+        %(param_batch_key)s
+        %(param_layer)s
+        %(param_cat_cov_keys)s
+        %(param_cont_cov_keys)s
+        %(param_copy)s
+
+        Returns
+        -------
+        %(returns)s
+        """
+        return _setup_anndata(
+            adata,
+            batch_key=batch_key,
+            labels_key=labels_key,
+            layer=layer,
+            categorical_covariate_keys=categorical_covariate_keys,
+            continuous_covariate_keys=continuous_covariate_keys,
+            copy=copy,
+        )

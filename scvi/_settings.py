@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from typing import Union
 
-import numpy as np
+import pytorch_lightning as pl
 import torch
 from rich.console import Console
 from rich.logging import RichHandler
@@ -34,6 +34,10 @@ class ScviConfig:
 
     >>> import logging
     >>> scvi.settings.verbosity = logging.INFO
+
+    To set the number of threads PyTorch will use
+
+    >>> scvi.settings.num_threads = 2
     """
 
     def __init__(
@@ -56,6 +60,7 @@ class ScviConfig:
         self.logging_dir = logging_dir
         self.dl_num_workers = dl_num_workers
         self.dl_pin_memory_gpu_training = dl_pin_memory_gpu_training
+        self._num_threads = None
 
     @property
     def batch_size(self) -> int:
@@ -107,6 +112,17 @@ class ScviConfig:
         self._logging_dir = Path(logging_dir).resolve()
 
     @property
+    def num_threads(self) -> None:
+        """Number of threads PyTorch will use."""
+        return self._num_threads
+
+    @num_threads.setter
+    def num_threads(self, num: int):
+        """Number of threads PyTorch will use."""
+        self._num_threads = num
+        torch.set_num_threads(num)
+
+    @property
     def progress_bar_style(self) -> str:
         """Library to use for progress bar."""
         return self._pbar_style
@@ -124,10 +140,9 @@ class ScviConfig:
     @seed.setter
     def seed(self, seed: int):
         """Random seed for torch and numpy."""
-        torch.manual_seed(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-        np.random.seed(seed)
+        pl.utilities.seed.seed_everything(seed)
         self._seed = seed
 
     @property

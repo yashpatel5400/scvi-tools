@@ -1,6 +1,7 @@
 import logging
+import warnings
 from collections.abc import Iterable as IterableClass
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import anndata
 import numpy as np
@@ -29,7 +30,7 @@ def parse_use_gpu_arg(
     ----------
     use_gpu
         Use default GPU if available (if None or True), or index of GPU to use (if int),
-        or name of GPU (if str), or use CPU (if False).
+        or name of GPU (if str, e.g., `'cuda:0'`), or use CPU (if False).
     return_device
         If True, will return the torch.device of use_gpu.
     """
@@ -41,9 +42,15 @@ def parse_use_gpu_arg(
         current = torch.cuda.current_device()
         device = torch.device(current)
         gpus = [current]
-    elif isinstance(use_gpu, int) or isinstance(use_gpu, str):
+    elif isinstance(use_gpu, int):
         device = torch.device(use_gpu)
         gpus = [use_gpu]
+    elif isinstance(use_gpu, str):
+        device = torch.device(use_gpu)
+        # changes "cuda:0" to "0,"
+        gpus = use_gpu.split(":")[-1] + ","
+    else:
+        raise ValueError("use_gpu argument not understood.")
 
     if return_device:
         return gpus, device
@@ -55,6 +62,7 @@ def scrna_raw_counts_properties(
     adata: anndata.AnnData,
     idx1: Union[List[int], np.ndarray],
     idx2: Union[List[int], np.ndarray],
+    var_idx: Optional[Union[List[int], np.ndarray]] = None,
 ) -> Dict[str, np.ndarray]:
     """
     Computes and returns some statistics on the raw counts of two sub-populations.
@@ -67,6 +75,8 @@ def scrna_raw_counts_properties(
         subset of indices describing the first population.
     idx2
         subset of indices describing the second population.
+    var_idx
+        subset of variables to extract properties from. if None, all variables are used.
 
     Returns
     -------
@@ -77,6 +87,10 @@ def scrna_raw_counts_properties(
     data = get_from_registry(adata, _CONSTANTS.X_KEY)
     data1 = data[idx1]
     data2 = data[idx2]
+    if var_idx is not None:
+        data1 = data1[:, var_idx]
+        data2 = data2[:, var_idx]
+
     mean1 = np.asarray((data1).mean(axis=0)).ravel()
     mean2 = np.asarray((data2).mean(axis=0)).ravel()
     nonz1 = np.asarray((data1 != 0).mean(axis=0)).ravel()
@@ -159,6 +173,7 @@ def scatac_raw_counts_properties(
     adata: anndata.AnnData,
     idx1: Union[List[int], np.ndarray],
     idx2: Union[List[int], np.ndarray],
+    var_idx: Optional[Union[List[int], np.ndarray]] = None,
 ) -> Dict[str, np.ndarray]:
     """
     Computes and returns some statistics on the raw counts of two sub-populations.
@@ -171,6 +186,8 @@ def scatac_raw_counts_properties(
         subset of indices describing the first population.
     idx2
         subset of indices describing the second population.
+    var_idx
+        subset of variables to extract properties from. if None, all variables are used.
 
     Returns
     -------
@@ -180,6 +197,9 @@ def scatac_raw_counts_properties(
     data = get_from_registry(adata, _CONSTANTS.X_KEY)
     data1 = data[idx1]
     data2 = data[idx2]
+    if var_idx is not None:
+        data1 = data1[:, var_idx]
+        data2 = data2[:, var_idx]
     mean1 = np.asarray((data1 > 0).mean(axis=0)).ravel()
     mean2 = np.asarray((data2 > 0).mean(axis=0)).ravel()
     properties = dict(emp_mean1=mean1, emp_mean2=mean2, emp_effect=(mean1 - mean2))
@@ -210,3 +230,52 @@ def _get_batch_code_from_category(
             batch_loc = np.where(batch_mappings == cat)[0][0]
             batch_code.append(batch_loc)
     return batch_code
+
+
+def _init_library_size(
+    adata: anndata.AnnData, n_batch: dict
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Computes and returns library size.
+
+    Parameters
+    ----------
+    adata
+        AnnData object setup with `scvi`.
+    n_batch
+        Number of batches.
+
+    Returns
+    -------
+    type
+        Tuple of two 1 x n_batch ``np.ndarray`` containing the means and variances
+        of library size in each batch in adata.
+
+        If a certain batch is not present in the adata, the mean defaults to 0,
+        and the variance defaults to 1. These defaults are arbitrary placeholders which
+        should not be used in any downstream computation.
+    """
+    data = get_from_registry(adata, _CONSTANTS.X_KEY)
+    batch_indices = get_from_registry(adata, _CONSTANTS.BATCH_KEY)
+
+    library_log_means = np.zeros(n_batch)
+    library_log_vars = np.ones(n_batch)
+
+    for i_batch in np.unique(batch_indices):
+        idx_batch = np.squeeze(batch_indices == i_batch)
+        batch_data = data[
+            idx_batch.nonzero()[0]
+        ]  # h5ad requires integer indexing arrays.
+        sum_counts = batch_data.sum(axis=1)
+        masked_log_sum = np.ma.log(sum_counts)
+        if np.ma.is_masked(masked_log_sum):
+            warnings.warn(
+                "This dataset has some empty cells, this might fail inference."
+                "Data should be filtered with `scanpy.pp.filter_cells()`"
+            )
+
+        log_counts = masked_log_sum.filled(0)
+        library_log_means[i_batch] = np.mean(log_counts).astype(np.float32)
+        library_log_vars[i_batch] = np.var(log_counts).astype(np.float32)
+
+    return library_log_means.reshape(1, -1), library_log_vars.reshape(1, -1)

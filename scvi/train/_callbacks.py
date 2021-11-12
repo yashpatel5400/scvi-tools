@@ -1,9 +1,12 @@
 import warnings
 from copy import deepcopy
+from typing import Optional, Tuple
 
 import numpy as np
+import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.utilities import rank_zero_info
 
 
@@ -82,7 +85,7 @@ class SaveBestState(Callback):
         logs = trainer.callback_metrics
         self.epochs_since_last_check += 1
 
-        if self.epochs_since_last_check >= self.period:
+        if trainer.current_epoch > 0 and self.epochs_since_last_check >= self.period:
             self.epochs_since_last_check = 0
             current = logs.get(self.monitor)
 
@@ -105,5 +108,37 @@ class SaveBestState(Callback):
                             f" Module best state updated."
                         )
 
+    def on_train_start(self, trainer, pl_module):
+        self.best_module_state = deepcopy(pl_module.module.state_dict())
+
     def on_train_end(self, trainer, pl_module):
         pl_module.module.load_state_dict(self.best_module_state)
+
+
+class LoudEarlyStopping(EarlyStopping):
+    """
+    Wrapper of Pytorch Lightning EarlyStopping callback that prints the reason for stopping on teardown.
+
+    When the early stopping condition is met, the reason is saved to the callback instance,
+    then printed on teardown. By printing on teardown, we do not interfere with the progress
+    bar callback.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.early_stopping_reason = None
+
+    def _evaluate_stopping_criteria(self, current: torch.Tensor) -> Tuple[bool, str]:
+        should_stop, reason = super()._evaluate_stopping_criteria(current)
+        if should_stop:
+            self.early_stopping_reason = reason
+        return should_stop, reason
+
+    def teardown(
+        self,
+        _trainer: pl.Trainer,
+        _pl_module: pl.LightningModule,
+        stage: Optional[str] = None,
+    ) -> None:
+        if self.early_stopping_reason is not None:
+            print(self.early_stopping_reason)
