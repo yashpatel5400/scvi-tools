@@ -14,3 +14,4 @@ Import scvi-tools as::
    user
    developer
    datasets
+   autotune
