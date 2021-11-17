@@ -64,6 +64,8 @@ class TrainingPlan(pl.LightningModule):
     n_epochs_kl_warmup
         Number of epochs to scale weight on KL divergences from 0 to 1.
         Overrides `n_steps_kl_warmup` when both are not `None`.
+    max_kl_weight
+        Maximum KL weight, defaults to 1.0.
     reduce_lr_on_plateau
         Whether to monitor validation loss and reduce learning rate when validation set
         `lr_scheduler_metric` plateaus.
@@ -116,6 +118,7 @@ class TrainingPlan(pl.LightningModule):
         self.lr_threshold = lr_threshold
         self.lr_min = lr_min
         self.loss_kwargs = loss_kwargs
+        self.max_kl_weight = 1.0
 
         self._n_obs_training = None
 
@@ -234,7 +237,7 @@ class TrainingPlan(pl.LightningModule):
     @property
     def kl_weight(self):
         """Scaling factor on KL divergence during training."""
-        return _compute_kl_weight(
+        return self.max_kl_weight * _compute_kl_weight(
             self.current_epoch,
             self.global_step,
             self.n_epochs_kl_warmup,
