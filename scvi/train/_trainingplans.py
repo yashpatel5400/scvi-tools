@@ -93,6 +93,7 @@ class TrainingPlan(pl.LightningModule):
         optimizer: Literal["Adam", "AdamW"] = "Adam",
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = 400,
+        max_kl_weight: float = 1.0,
         reduce_lr_on_plateau: bool = False,
         lr_factor: float = 0.6,
         lr_patience: int = 30,
@@ -118,7 +119,7 @@ class TrainingPlan(pl.LightningModule):
         self.lr_threshold = lr_threshold
         self.lr_min = lr_min
         self.loss_kwargs = loss_kwargs
-        self.max_kl_weight = 1.0
+        self.max_kl_weight = max_kl_weight
 
         self._n_obs_training = None
 
