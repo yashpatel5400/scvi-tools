@@ -512,32 +512,44 @@ class SemiSupervisedTrainingPlan(TrainingPlan):
         if len(batch) == 2:
             full_dataset = batch[0]
             labelled_dataset = batch[1]
+            self._labelled_data = True
         else:
             full_dataset = batch
             labelled_dataset = None
+            self._labelled_data = False
 
-        if "kl_weight" in self.loss_kwargs:
-            self.loss_kwargs.update({"kl_weight": self.kl_weight})
-        input_kwargs = dict(
-            feed_labels=False,
-            labelled_tensors=labelled_dataset,
-        )
-        input_kwargs.update(self.loss_kwargs)
-        _, _, scvi_losses = self.forward(full_dataset, loss_kwargs=input_kwargs)
-        loss = scvi_losses.loss
-        reconstruction_loss = scvi_losses.reconstruction_loss
-        self.log("train_loss", loss, on_epoch=True)
-        loss_dict = {
-            "loss": loss,
-            "reconstruction_loss_sum": reconstruction_loss.sum().detach(),
-            "kl_local_sum": scvi_losses.kl_local.sum().detach(),
-            "kl_global": scvi_losses.kl_global.detach(),
-            "n_obs": reconstruction_loss.shape[0],
-        }
-        if hasattr(scvi_losses, "classification_loss"):
-            loss_dict["classification_loss"] = scvi_losses.classification_loss.detach()
-            loss_dict["n_labelled_tensors"] = scvi_losses.n_labelled_tensors
-        return loss_dict
+        if optimizer_idx == 0:
+            if "kl_weight" in self.loss_kwargs:
+                self.loss_kwargs.update({"kl_weight": self.kl_weight})
+            input_kwargs = dict(
+                feed_labels=False,
+                labelled_tensors=labelled_dataset,
+            )
+            input_kwargs.update(self.loss_kwargs)
+            _, _, scvi_losses = self.forward(full_dataset, loss_kwargs=input_kwargs)
+            loss = scvi_losses.loss
+            reconstruction_loss = scvi_losses.reconstruction_loss
+            self.log("train_loss", loss, on_epoch=True)
+            loss_dict = {
+                "loss": loss,
+                "reconstruction_loss_sum": reconstruction_loss.sum().detach(),
+                "kl_local_sum": scvi_losses.kl_local.sum().detach(),
+                "kl_global": scvi_losses.kl_global.detach(),
+                "n_obs": reconstruction_loss.shape[0],
+            }
+            if hasattr(scvi_losses, "classification_loss"):
+                loss_dict[
+                    "classification_loss"
+                ] = scvi_losses.classification_loss.detach()
+                loss_dict["n_labelled_tensors"] = scvi_losses.n_labelled_tensors
+            return loss_dict
+
+        if optimizer_idx == 1 and labelled_dataset is not None:
+            self.module.eval()
+            self.module.classifier.train()
+            classification_loss = self.module.classification_loss(labelled_dataset)
+            self.module.train()
+            return classification_loss
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
         # Potentially dangerous if batch is from a single dataloader with two keys
@@ -570,6 +582,9 @@ class SemiSupervisedTrainingPlan(TrainingPlan):
         return loss_dict
 
     def training_epoch_end(self, outputs):
+        # when two optimizers are used
+        if self._labelled_data:
+            outputs = outputs[0]
         super().training_epoch_end(outputs)
         classifier_loss, total_labelled_tensors = 0, 0
 
@@ -601,6 +616,30 @@ class SemiSupervisedTrainingPlan(TrainingPlan):
                 "classification_loss_validation",
                 classifier_loss / total_labelled_tensors,
             )
+
+    def configure_optimizers(self):
+        config1 = super().configure_optimizers()
+
+        params2 = list(
+            filter(lambda p: p.requires_grad, self.module.classifier.parameters())
+        )
+        # do nothing if no params (scarches case)
+        if len(params2) > 0:
+            optimizer2 = torch.optim.Adam(
+                params2, lr=5e-3, eps=0.01, weight_decay=self.weight_decay
+            )
+            config2 = {"optimizer": optimizer2}
+
+            # bug in pytorch lightning requires this way to return
+            opts = [config1.pop("optimizer"), config2["optimizer"]]
+            if "lr_scheduler" in config1:
+                config1["scheduler"] = config1.pop("lr_scheduler")
+                scheds = [config1]
+                return opts, scheds
+            else:
+                return opts
+        else:
+            return config1
 
 
 class PyroTrainingPlan(pl.LightningModule):
