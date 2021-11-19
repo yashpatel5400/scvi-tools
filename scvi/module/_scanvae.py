@@ -303,17 +303,17 @@ class SCANVAE(VAE):
         kl_divergence = (kl_divergence_z2.view(self.n_labels, -1).t() * probs).sum(
             dim=1
         )
-        # kl_divergence += kl(
-        #     Categorical(probs=probs),
-        #     Categorical(probs=self.y_prior.repeat(probs.size(0), 1)),
-        # )
+        kl_divergence += kl(
+            Categorical(probs=probs),
+            Categorical(probs=self.y_prior.repeat(probs.size(0), 1)),
+        )
         kl_divergence += kl_divergence_l
 
         loss = torch.mean(reconst_loss + kl_divergence * kl_weight)
 
         if labelled_tensors is not None:
             classifier_loss = self.classification_loss(labelled_tensors)
-            loss += classifier_loss * classification_ratio
+            # loss += classifier_loss * classification_ratio
             return LossRecorder(
                 loss,
                 reconst_loss,
