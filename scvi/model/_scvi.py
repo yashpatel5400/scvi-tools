@@ -1,16 +1,16 @@
 import logging
 from typing import List, Optional, Union
 
-from anndata import AnnData
 import numpy as np
+from anndata import AnnData
 
 from scvi._compat import Literal
 from scvi.data._anndata import _setup_anndata
+from scvi.dataloaders import DataSplitter
 from scvi.model._utils import _init_library_size
 from scvi.module import VAE, Classifier
-from scvi.utils import setup_anndata_dsp
-from scvi.dataloaders import DataSplitter
 from scvi.train import AdversarialTrainingPlan, TrainRunner
+from scvi.utils import setup_anndata_dsp
 
 from .base import ArchesMixin, BaseModelClass, RNASeqMixin, VAEMixin
 
