@@ -5,7 +5,6 @@ from scvi.data import synthetic_iid
 from scvi.model import SCVI
 from scvi.train._callbacks import SaveBestState
 
-
 def test_save_best_state_callback(save_path):
     n_latent = 5
     adata = synthetic_iid()

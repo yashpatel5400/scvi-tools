@@ -5,6 +5,7 @@ from typing import Callable, Iterable, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
+import pdb
 from torch import logsumexp
 from torch.distributions import Normal, Poisson
 from torch.distributions import kl_divergence as kl
@@ -158,7 +159,7 @@ class VAE(BaseModuleClass):
         # z encoder goes from the n_input-dimensional data to an n_latent-d
         # latent space representation
         n_input_encoder = n_input + n_continuous_cov * encode_covariates
-        cat_list = [n_batch] + list([] if n_cats_per_cov is None else n_cats_per_cov)
+        cat_list = [1] + list([] if n_cats_per_cov is None else n_cats_per_cov)
         encoder_cat_list = cat_list if encode_covariates else None
         self.z_encoder = Encoder(
             n_input_encoder,
@@ -177,6 +178,19 @@ class VAE(BaseModuleClass):
         self.l_encoder = Encoder(
             n_input_encoder,
             1,
+            n_layers=1,
+            n_cat_list=encoder_cat_list,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            inject_covariates=deeply_inject_covariates,
+            use_batch_norm=use_batch_norm_encoder,
+            use_layer_norm=use_layer_norm_encoder,
+            var_activation=var_activation,
+        )
+        # s encoder goes from n_input-dimensional data to n_batch-d latent space
+        self.s_encoder = Encoder(
+            n_input_encoder,
+            n_batch,
             n_layers=1,
             n_cat_list=encoder_cat_list,
             n_hidden=n_hidden,
@@ -217,7 +231,7 @@ class VAE(BaseModuleClass):
     def _get_generative_input(self, tensors, inference_outputs):
         z = inference_outputs["z"]
         library = inference_outputs["library"]
-        batch_index = tensors[_CONSTANTS.BATCH_KEY]
+        batch_index = inference_outputs["batch_embedding"]
         y = tensors[_CONSTANTS.LABELS_KEY]
 
         cont_key = _CONSTANTS.CONT_COVS_KEY
@@ -281,6 +295,12 @@ class VAE(BaseModuleClass):
                 encoder_input, batch_index, *categorical_input
             )
             library = library_encoded
+        
+        qs_m, qs_v = None, None
+        qs_m, qs_v, batch_encoded = self.s_encoder(
+            encoder_input, *categorical_input
+        )
+        batch_embedding = batch_encoded
 
         if n_samples > 1:
             qz_m = qz_m.unsqueeze(0).expand((n_samples, qz_m.size(0), qz_m.size(1)))
@@ -296,8 +316,13 @@ class VAE(BaseModuleClass):
                 ql_m = ql_m.unsqueeze(0).expand((n_samples, ql_m.size(0), ql_m.size(1)))
                 ql_v = ql_v.unsqueeze(0).expand((n_samples, ql_v.size(0), ql_v.size(1)))
                 library = Normal(ql_m, ql_v.sqrt()).sample()
+            
+            qs_m = qs_m.unsqueeze(0).expand((n_samples, qs_m.size(0), qs_m.size(1)))
+            qs_v = qs_v.unsqueeze(0).expand((n_samples, qs_v.size(0), qs_v.size(1)))
+            untran_batch_embedding = Normal(qs_m, qs_v.sqrt()).sample()
+            batch_embedding = self.s_encoder.z_transformation(untran_batch_embedding)
 
-        outputs = dict(z=z, qz_m=qz_m, qz_v=qz_v, ql_m=ql_m, ql_v=ql_v, library=library)
+        outputs = dict(z=z, qz_m=qz_m, qz_v=qz_v, ql_m=ql_m, ql_v=ql_v, qs_m=qs_m, qs_v=qs_v, library=library, batch_embedding=batch_embedding)
         return outputs
 
     @auto_move_data
@@ -375,18 +400,24 @@ class VAE(BaseModuleClass):
             ).sum(dim=1)
         else:
             kl_divergence_l = 0.0
+        
+        qs_m = inference_outputs["qs_m"]
+        qs_v = inference_outputs["qs_v"]
+        s_mean = torch.zeros_like(qs_m)
+        s_scale = torch.ones_like(qs_v)
+        kl_divergence_s = kl(Normal(qs_m, qs_v.sqrt()), Normal(s_mean, s_scale)).sum(dim=1)
 
         reconst_loss = self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)
 
         kl_local_for_warmup = kl_divergence_z
-        kl_local_no_warmup = kl_divergence_l
+        kl_local_no_warmup = kl_divergence_l + kl_divergence_s
 
         weighted_kl_local = kl_weight * kl_local_for_warmup + kl_local_no_warmup
 
         loss = torch.mean(reconst_loss + weighted_kl_local)
 
         kl_local = dict(
-            kl_divergence_l=kl_divergence_l, kl_divergence_z=kl_divergence_z
+            kl_divergence_l=kl_divergence_l, kl_divergence_z=kl_divergence_z, kl_divergence_s=kl_divergence_s
         )
         kl_global = torch.tensor(0.0)
         return LossRecorder(loss, reconst_loss, kl_local, kl_global)
@@ -410,7 +441,7 @@ class VAE(BaseModuleClass):
         n_samples
             Number of required samples for each cell
         library_size
-            Library size to scale scamples to
+            Library size to scale samples to
 
         Returns
         -------
@@ -486,6 +517,9 @@ class VAE(BaseModuleClass):
             qz_m = inference_outputs["qz_m"]
             qz_v = inference_outputs["qz_v"]
             z = inference_outputs["z"]
+            qs_m = inference_outputs["qs_m"]
+            qs_v = inference_outputs["qs_v"]
+            batch_embedding = inference_outputs["batch_embedding"]
             library = inference_outputs["library"]
 
             # Reconstruction Loss
@@ -504,6 +538,14 @@ class VAE(BaseModuleClass):
 
             q_z_x = Normal(qz_m, qz_v.sqrt()).log_prob(z).sum(dim=-1)
             log_prob_sum -= q_z_x
+
+            p_s = (
+                Normal(torch.zeros_like(qs_m), torch.ones_like(qs_v))
+                .log_prob(batch_embedding)
+                .sum(dim=-1)
+            )
+            q_s_x = Normal(qs_m, qs_v.sqrt()).log_prob(batch_embedding).sum(dim=-1)
+            log_prob_sum += p_s - q_s_x
 
             if not self.use_observed_lib_size:
                 (

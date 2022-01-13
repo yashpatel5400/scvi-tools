@@ -1,3 +1,4 @@
+import docrep
 from docrep import DocstringProcessor
 
 doc_differential_expression = """\
