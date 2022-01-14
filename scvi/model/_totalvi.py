@@ -70,6 +70,8 @@ class TOTALVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
         100 cells per batch and averages the distributions. Note that even with this option set to `True`,
         this only initializes a parameter that is learned during inference. If `False`, randomly initializes.
         The default (`None`), sets this to `True` if greater than 10 proteins are used.
+    override_missing_proteins
+        If `True`, will not treat proteins with all 0 expression in a particular batch as missing.
     **model_kwargs
         Keyword args for :class:`~scvi.module.TOTALVAE`
 
@@ -103,20 +105,35 @@ class TOTALVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
         gene_likelihood: Literal["zinb", "nb"] = "nb",
         latent_distribution: Literal["normal", "ln"] = "normal",
         empirical_protein_background_prior: Optional[bool] = None,
+        override_missing_proteins: bool = False,
         **model_kwargs,
     ):
         super(TOTALVI, self).__init__(adata)
-        if "totalvi_batch_mask" in self.scvi_setup_dict_.keys():
+        if (
+            "totalvi_batch_mask" in self.scvi_setup_dict_.keys()
+            and not override_missing_proteins
+        ):
             batch_mask = self.scvi_setup_dict_["totalvi_batch_mask"]
+            msg = (
+                "Some proteins have all 0 counts in some batches. "
+                + "These proteins will be treated as missing measurements; however, "
+                + "this can occur due to experimental design/biology. "
+                + "Reinitialize the model with `override_missing_proteins=True`,"
+                + "to override this behavior."
+            )
+            warnings.warn(msg, UserWarning)
+            self._use_adversarial_classifier = True
         else:
             batch_mask = None
+            self._use_adversarial_classifier = False
+
         emp_prior = (
             empirical_protein_background_prior
             if empirical_protein_background_prior is not None
             else (self.summary_stats["n_proteins"] > 10)
         )
         if emp_prior:
-            prior_mean, prior_scale = _get_totalvi_protein_priors(adata)
+            prior_mean, prior_scale = _get_totalvi_protein_priors(adata, batch_mask)
         else:
             prior_mean, prior_scale = None, None
 
@@ -221,10 +238,7 @@ class TOTALVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
         if adversarial_classifier is None:
-            imputation = (
-                True if "totalvi_batch_mask" in self.scvi_setup_dict_.keys() else False
-            )
-            adversarial_classifier = True if imputation else False
+            adversarial_classifier = self._use_adversarial_classifier
         n_steps_kl_warmup = (
             n_steps_kl_warmup
             if n_steps_kl_warmup is not None
@@ -1089,7 +1103,7 @@ class TOTALVI(RNASeqMixin, VAEMixin, ArchesMixin, BaseModelClass):
         )
 
 
-def _get_totalvi_protein_priors(adata, n_cells=100):
+def _get_totalvi_protein_priors(adata, batch_mask, n_cells=100):
     """Compute an empirical prior for protein background."""
     import warnings
 
@@ -1098,6 +1112,7 @@ def _get_totalvi_protein_priors(adata, n_cells=100):
 
     warnings.filterwarnings("error")
 
+    logger.info("Computing empirical prior initialization for protein background.")
     batch = get_from_registry(adata, _CONSTANTS.BATCH_KEY).ravel()
     cats = adata.uns["_scvi"]["categorical_mappings"]["_scvi_batch"]["mapping"]
     codes = np.arange(len(cats))
@@ -1111,12 +1126,27 @@ def _get_totalvi_protein_priors(adata, n_cells=100):
             batch_avg_mus.append(0)
             batch_avg_scales.append(1)
             continue
-        pro_exp = get_from_registry(adata, _CONSTANTS.PROTEIN_EXP_KEY)[batch == b]
+        pro_exp = get_from_registry(adata, _CONSTANTS.PROTEIN_EXP_KEY)
+        if isinstance(pro_exp, pd.DataFrame):
+            pro_exp = np.asarray(pro_exp)
+        pro_exp = pro_exp[batch == b]
+        # non missing
+        if batch_mask is not None:
+            pro_exp = pro_exp[:, batch_mask[b]]
+            if pro_exp.shape[1] < 5:
+                logger.debug(
+                    f"Batch {b} has too few proteins to set prior, setting randomly."
+                )
+                batch_avg_mus.append(0.0)
+                batch_avg_scales.append(0.05)
+                continue
 
-        # for missing batches, put dummy values -- scarches case, will be replaced anyway
+        # a batch is missing because it's in the reference but not query data
+        # for scarches case, these values will be replaced by original state dict
         if pro_exp.shape[0] == 0:
             batch_avg_mus.append(0.0)
             batch_avg_scales.append(0.05)
+            continue
 
         cells = np.random.choice(np.arange(pro_exp.shape[0]), size=n_cells)
         if isinstance(pro_exp, pd.DataFrame):
@@ -1131,7 +1161,7 @@ def _get_totalvi_protein_priors(adata, n_cells=100):
             # when cell is all 0
             except ConvergenceWarning:
                 mus.append(0)
-                scales.append(0.05)
+                scales.append(0.5)
                 continue
 
             means = gmm.means_.ravel()
@@ -1150,10 +1180,11 @@ def _get_totalvi_protein_priors(adata, n_cells=100):
         batch_avg_scales.append(batch_avg_scale)
 
     # repeat prior for each protein
+    n_proteins = get_from_registry(adata, _CONSTANTS.PROTEIN_EXP_KEY).shape[1]
     batch_avg_mus = np.array(batch_avg_mus, dtype=np.float32).reshape(1, -1)
     batch_avg_scales = np.array(batch_avg_scales, dtype=np.float32).reshape(1, -1)
-    batch_avg_mus = np.tile(batch_avg_mus, (pro_exp.shape[1], 1))
-    batch_avg_scales = np.tile(batch_avg_scales, (pro_exp.shape[1], 1))
+    batch_avg_mus = np.tile(batch_avg_mus, (n_proteins, 1))
+    batch_avg_scales = np.tile(batch_avg_scales, (n_proteins, 1))
 
     warnings.resetwarnings()
 

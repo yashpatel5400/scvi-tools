@@ -636,6 +636,12 @@ def test_scanvi(save_path):
     m = scvi.model.SCVI(a, use_observed_lib_size=False)
     a2 = scvi.data.synthetic_iid()
     scanvi_model = scvi.model.SCANVI.from_scvi_model(m, "label_0", adata=a2)
+    # make sure the state_dicts are different objects for the two models
+    assert scanvi_model.module.state_dict() is not m.module.state_dict()
+    scanvi_pxr = scanvi_model.module.state_dict().get("px_r", None)
+    scvi_pxr = m.module.state_dict().get("px_r", None)
+    assert scanvi_pxr is not None and scvi_pxr is not None
+    assert scanvi_pxr is not scvi_pxr
     scanvi_model = scvi.model.SCANVI.from_scvi_model(
         m, "label_0", use_labels_groups=False
     )
@@ -816,6 +822,10 @@ def test_totalvi(save_path):
     adata = scvi.data.pbmcs_10x_cite_seq(save_path=save_path, protein_join="outer")
     model = TOTALVI(adata)
     assert model.module.protein_batch_mask is not None
+    model.train(1, train_size=0.5)
+
+    model = TOTALVI(adata, override_missing_proteins=True)
+    assert model.module.protein_batch_mask is None
     model.train(1, train_size=0.5)
 
 

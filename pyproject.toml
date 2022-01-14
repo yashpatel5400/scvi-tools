@@ -27,13 +27,14 @@ packages = [
   {include = "scvi"},
 ]
 readme = "README.md"
-version = "0.14.3"
+version = "0.14.5"
 
 [tool.poetry.dependencies]
 anndata = ">=0.7.5"
 black = {version = ">=20.8b1", optional = true}
 codecov = {version = ">=2.0.8", optional = true}
 docrep = ">=0.3.2"
+torchmetrics = ">=0.6.0"
 flake8 = {version = ">=3.7.7", optional = true}
 h5py = ">=2.9.0"
 hyperopt = "*"
