@@ -129,7 +129,6 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = "default"
-pygments_dark_style = "native"
 
 # If true, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = False
@@ -137,22 +136,23 @@ todo_include_todos = False
 
 # -- Options for HTML output -------------------------------------------
 
-# html_show_sourcelink = True
-html_theme = "furo"
+html_show_sourcelink = True
+html_theme = "pydata_sphinx_theme"
 
 # Set link name generated in the top bar.
 html_title = "scvi-tools"
 html_logo = "_static/logo.png"
 
+html_context = dict(
+    github_user="YosefLab",  # Username
+    github_repo="scvi-tools",  # Repo name
+    github_version="master",  # Version
+    doc_path="docs/",  # Path in the checkout to the docs root
+)
+
 html_theme_options = {
-    "sidebar_hide_name": True,
-    "light_css_variables": {
-        "color-brand-primary": "#003262",
-        "color-brand-content": "#003262",
-        "admonition-font-size": "var(--font-size-normal)",
-        "admonition-title-font-size": "var(--font-size-normal)",
-        "code-font-size": "var(--font-size--small)",
-    },
+    "github_url": "https://github.com/YosefLab/scvi-tools",
+    "twitter_url": "https://twitter.com/YosefLab",
 }
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -216,11 +216,3 @@ nbsphinx_thumbnails = {
     "tutorials/notebooks/cell2location_lymph_node_spatial_tutorial": "_static/tutorials/cell2location.png",
     "tutorials/notebooks/tabula_muris": "_static/tutorials/muris-mouse.png",
 }
-
-
-def setup(app):
-    # https://github.com/pradyunsg/furo/issues/49
-    app.config.pygments_style = "default"
-    app.config.pygments_dark_style = "native"
-    app.add_stylesheet("css/override.css")
-    app.add_stylesheet("css/sphinx_gallery.css")

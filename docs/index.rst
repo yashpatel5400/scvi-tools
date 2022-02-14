@@ -61,4 +61,3 @@ If you find a model useful for your research, please consider citing the scvi-to
    references
    contributing/index
    Discussion <https://discourse.scvi-tools.org>
-   GitHub <https://github.com/YosefLab/scvi-tools>

@@ -5,6 +5,16 @@
 https://github.com/streamlink/streamlink/blob/17a4088c38709123c0bcab4a150549bd16d19e07/docs/_static/styles/custom.css
 */
 
+/* pydata fonts */
+:root {
+    --pst-font-family-base: -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial,
+    sans-serif, Apple Color Emoji, Segoe UI Emoji, var(--pst-font-family-base-system);
+    --pst-font-family-heading: -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial,
+    sans-serif, Apple Color Emoji, Segoe UI Emoji, var(--pst-font-family-base-system);
+    --pst-font-family-monospace: "SFMono-Regular", Menlo, Consolas, Monaco,
+    Liberation Mono, Lucida Console, var(--pst-font-family-monospace-system);
+}
+
 dt:target, span.highlighted {
     background-color: #f0f0f0;
 }
@@ -15,8 +25,17 @@ dl.citation > dt {
     font-weight: bold;
 }
 
+code.docutils.literal.notranslate {
+    background: #f8f9fb;
+    font-size: 87.5%;
+    border-radius: .2em;
+    color: #000000;
+    word-wrap: break-word;
+    padding: .1em .2em;
+}
+
 /* Parameters normalize size and captialized, */
-dl .field-list dt {
+dl.c .field-list dt, dl.cpp .field-list dt, dl.js .field-list dt, dl.py .field-list dt {
     font-size: var(--font-size--normal) !important;
     text-transform: none !important;
 }
