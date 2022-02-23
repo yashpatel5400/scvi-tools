@@ -93,14 +93,16 @@ class BaseModuleClass(nn.Module):
     ):
         super().__init__()
 
-    @property
-    def device(self):
-        device = list(set(p.device for p in self.parameters()))
-        if len(device) > 1:
-            raise RuntimeError("Module tensors on multiple devices.")
-        return device[0]
+    # @property
+    # @torch.jit.ignore
+    # def device(self):
+    #     device = list(set(p.device for p in self.parameters()))
+    #     if len(device) > 1:
+    #         raise RuntimeError("Module tensors on multiple devices.")
+    #     return device[0]
 
     @auto_move_data
+    @torch.jit.ignore
     def forward(
         self,
         tensors,
@@ -158,10 +160,12 @@ class BaseModuleClass(nn.Module):
             return inference_outputs, generative_outputs
 
     @abstractmethod
+    @torch.jit.ignore
     def _get_inference_input(self, tensors: Dict[str, torch.Tensor], **kwargs):
         """Parse tensors dictionary for inference related values."""
 
     @abstractmethod
+    @torch.jit.ignore
     def _get_generative_input(
         self,
         tensors: Dict[str, torch.Tensor],

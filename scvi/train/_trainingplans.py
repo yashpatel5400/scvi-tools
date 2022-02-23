@@ -127,9 +127,9 @@ class TrainingPlan(pl.LightningModule):
         self._n_obs_validation = None
 
         # automatic handling of kl weight
-        self._loss_args = getfullargspec(self.module.loss)[0]
-        if "kl_weight" in self._loss_args:
-            self.loss_kwargs.update({"kl_weight": self.kl_weight})
+        # self._loss_args = getfullargspec(self.module.loss)[0]
+        # if "kl_weight" in self._loss_args:
+        #     self.loss_kwargs.update({"kl_weight": self.kl_weight})
 
         self.initialize_train_metrics()
         self.initialize_val_metrics()
@@ -159,8 +159,8 @@ class TrainingPlan(pl.LightningModule):
 
     @n_obs_training.setter
     def n_obs_training(self, n_obs: int):
-        if "n_obs" in self._loss_args:
-            self.loss_kwargs.update({"n_obs": n_obs})
+        # if "n_obs" in self._loss_args:
+        #     self.loss_kwargs.update({"n_obs": n_obs})
         self._n_obs_training = n_obs
         self.initialize_train_metrics()
 

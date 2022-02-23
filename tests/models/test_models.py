@@ -82,6 +82,25 @@ LEGACY_SETUP_DICT = {
 }
 
 
+def test_scvi_jit(save_path):
+    n_latent = 5
+
+    # Test with size factor.
+    adata = synthetic_iid(batch_size=20000, n_genes=1000)
+    adata.obs["size_factor"] = np.random.randint(1, 5, size=(adata.shape[0],))
+    SCVI.setup_anndata(
+        adata,
+        batch_key="batch",
+        labels_key="labels",
+        size_factor_key="size_factor",
+    )
+    model = SCVI(adata, n_latent=n_latent)
+    import torch
+
+    model.module = torch.jit.script(model.module)
+    model.train(100, check_val_every_n_epoch=1, train_size=0.9)
+
+
 def test_scvi(save_path):
     n_latent = 5
 

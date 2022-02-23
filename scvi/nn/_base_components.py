@@ -3,7 +3,7 @@ from typing import Callable, Iterable, List, Optional
 
 import torch
 from torch import nn as nn
-from torch.distributions import Normal
+from pyro.distributions import Normal
 from torch.nn import ModuleList
 
 from scvi._compat import Literal
@@ -11,15 +11,16 @@ from scvi._compat import Literal
 from ._utils import one_hot
 
 
-def reparameterize_gaussian(mu, var):
+@torch.jit.ignore
+def reparameterize_gaussian(mu: torch.Tensor, var: torch.Tensor):
     return Normal(mu, var.sqrt()).rsample()
 
 
-def identity(x):
+def identity(x: torch.Tensor):
     return x
 
 
-class FCLayers(torch.jit.ScriptModule):
+class FCLayers(nn.Module):
     """
     A helper class to build fully-connected layers for a neural network.
 
@@ -109,40 +110,39 @@ class FCLayers(torch.jit.ScriptModule):
             )
         )
 
-    def inject_into_layer(self, layer_num: int, layer: nn.Module) -> bool:
-        """Helper to determine if covariates should be injected."""
-        user_cond = layer_num == 0 or (layer_num > 0 and self.inject_covariates)
+    # def inject_into_layer(self, layer_num: int, layer: nn.Module) -> bool:
+    #     """Helper to determine if covariates should be injected."""
+    #     user_cond = layer_num == 0 or (layer_num > 0 and self.inject_covariates)
 
-        layer_cond = layer is None or isinstance(layer, nn.Linear)
-        return user_cond and layer_cond
+    #     layer_cond = layer is None or isinstance(layer, nn.Linear)
+    #     return user_cond and layer_cond
 
-    def set_online_update_hooks(self, hook_first_layer=True):
-        self.hooks = []
+    # def set_online_update_hooks(self, hook_first_layer=True):
+    #     self.hooks = []
 
-        def _hook_fn_weight(grad):
-            categorical_dims = sum(self.n_cat_list)
-            new_grad = torch.zeros_like(grad)
-            if categorical_dims > 0:
-                new_grad[:, -categorical_dims:] = grad[:, -categorical_dims:]
-            return new_grad
+    #     def _hook_fn_weight(grad):
+    #         categorical_dims = sum(self.n_cat_list)
+    #         new_grad = torch.zeros_like(grad)
+    #         if categorical_dims > 0:
+    #             new_grad[:, -categorical_dims:] = grad[:, -categorical_dims:]
+    #         return new_grad
 
-        def _hook_fn_zero_out(grad):
-            return grad * 0
+    #     def _hook_fn_zero_out(grad):
+    #         return grad * 0
 
-        for i, layers in enumerate(self.fc_layers):
-            for layer in layers:
-                if i == 0 and not hook_first_layer:
-                    continue
-                if isinstance(layer, nn.Linear):
-                    if self.inject_into_layer(i):
-                        w = layer.weight.register_hook(_hook_fn_weight)
-                    else:
-                        w = layer.weight.register_hook(_hook_fn_zero_out)
-                    self.hooks.append(w)
-                    b = layer.bias.register_hook(_hook_fn_zero_out)
-                    self.hooks.append(b)
+    #     for i, layers in enumerate(self.fc_layers):
+    #         for layer in layers:
+    #             if i == 0 and not hook_first_layer:
+    #                 continue
+    #             if isinstance(layer, nn.Linear):
+    #                 if self.inject_into_layer(i):
+    #                     w = layer.weight.register_hook(_hook_fn_weight)
+    #                 else:
+    #                     w = layer.weight.register_hook(_hook_fn_zero_out)
+    #                 self.hooks.append(w)
+    #                 b = layer.bias.register_hook(_hook_fn_zero_out)
+    #                 self.hooks.append(b)
 
-    @torch.jit.script_method
     def forward(self, x: torch.Tensor, cat_list: List[torch.Tensor]):
         """
         Forward computation on ``x``.
@@ -273,7 +273,7 @@ class Encoder(nn.Module):
             self.z_transformation = identity
         self.var_activation = torch.exp if var_activation is None else var_activation
 
-    def forward(self, x: torch.Tensor, *cat_list: int):
+    def forward(self, x: torch.Tensor, cat_list: List[torch.Tensor]):
         r"""
         The forward computation for a single sample.
 
@@ -295,7 +295,7 @@ class Encoder(nn.Module):
 
         """
         # Parameters for latent distribution
-        q = self.encoder(x, *cat_list)
+        q = self.encoder(x, cat_list)
         q_m = self.mean_encoder(q)
         q_v = self.var_activation(self.var_encoder(q)) + self.var_eps
         latent = self.z_transformation(reparameterize_gaussian(q_m, q_v))
@@ -381,7 +381,7 @@ class DecoderSCVI(nn.Module):
         dispersion: str,
         z: torch.Tensor,
         library: torch.Tensor,
-        *cat_list: int,
+        cat_list: List[torch.Tensor],
     ):
         """
         The forward computation for a single sample.
@@ -413,7 +413,7 @@ class DecoderSCVI(nn.Module):
 
         """
         # The decoder returns values for the parameters of the ZINB distribution
-        px = self.px_decoder(z, *cat_list)
+        px = self.px_decoder(z, cat_list)
         px_scale = self.px_scale_decoder(px)
         px_dropout = self.px_dropout_decoder(px)
         # Clamp to high value: exp(12) ~ 160000 to avoid nans (computational stability)

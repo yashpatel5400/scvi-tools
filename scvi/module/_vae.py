@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Main module."""
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, Optional, Union
 
 import numpy as np
 import torch
@@ -17,7 +17,7 @@ from scvi.nn import DecoderSCVI, Encoder, LinearDecoderSCVI, one_hot
 
 torch.backends.cudnn.benchmark = True
 
-
+NoneType = type(None)
 # VAE model
 class VAE(BaseModuleClass):
     """
@@ -205,6 +205,7 @@ class VAE(BaseModuleClass):
             scale_activation="softplus" if use_size_factor_key else "softmax",
         )
 
+    @torch.jit.ignore
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
@@ -220,6 +221,7 @@ class VAE(BaseModuleClass):
         )
         return input_dict
 
+    @torch.jit.ignore
     def _get_generative_input(self, tensors, inference_outputs):
         z = inference_outputs["z"]
         library = inference_outputs["library"]
@@ -268,15 +270,34 @@ class VAE(BaseModuleClass):
         return local_library_log_means, local_library_log_vars
 
     @auto_move_data
-    def inference(self, x, batch_index, cont_covs=None, cat_covs=None, n_samples=1):
+    @torch.jit.ignore
+    def inference(
+        self,
+        x,
+        batch_index,
+        cont_covs: Union[torch.Tensor, NoneType] = None,
+        cat_covs: Union[torch.Tensor, NoneType] = None,
+        n_samples: int = 1,
+    ):
+        return self._inference(
+            x, batch_index, cont_covs=None, cat_covs=None, n_samples=1
+        )
+
+    @torch.jit.export
+    def _inference(
+        self,
+        x,
+        batch_index,
+        cont_covs: Union[torch.Tensor, NoneType] = None,
+        cat_covs: Union[torch.Tensor, NoneType] = None,
+        n_samples: int = 1,
+    ):
         """
         High level inference method.
 
         Runs the inference (encoder) model.
         """
         x_ = x
-        if self.use_observed_lib_size:
-            library = torch.log(x.sum(1)).unsqueeze(1)
         if self.log_variational:
             x_ = torch.log(1 + x_)
 
@@ -287,35 +308,43 @@ class VAE(BaseModuleClass):
         if cat_covs is not None and self.encode_covariates is True:
             categorical_input = torch.split(cat_covs, 1, dim=1)
         else:
-            categorical_input = tuple()
-        qz_m, qz_v, z = self.z_encoder(encoder_input, [batch_index, *categorical_input])
+            categorical_input = None
 
-        ql_m, ql_v = None, None
+        if categorical_input is not None:
+            cat_list = [batch_index] + categorical_input
+        else:
+            cat_list = [batch_index]
+        qz_m, qz_v, z = self.z_encoder(encoder_input, cat_list)
+
+        ql_m, ql_v = torch.zeros(x.shape[0], 1, device=x.device), torch.ones(
+            x.shape[0], 1, device=x.device
+        )
         if not self.use_observed_lib_size:
-            ql_m, ql_v, library_encoded = self.l_encoder(
-                encoder_input, [batch_index, *categorical_input]
-            )
+            ql_m, ql_v, library_encoded = self.l_encoder(encoder_input, cat_list)
             library = library_encoded
+        else:
+            library = torch.log(x.sum(1)).unsqueeze(1)
 
-        if n_samples > 1:
-            qz_m = qz_m.unsqueeze(0).expand((n_samples, qz_m.size(0), qz_m.size(1)))
-            qz_v = qz_v.unsqueeze(0).expand((n_samples, qz_v.size(0), qz_v.size(1)))
-            # when z is normal, untran_z == z
-            untran_z = Normal(qz_m, qz_v.sqrt()).sample()
-            z = self.z_encoder.z_transformation(untran_z)
-            if self.use_observed_lib_size:
-                library = library.unsqueeze(0).expand(
-                    (n_samples, library.size(0), library.size(1))
-                )
-            else:
-                ql_m = ql_m.unsqueeze(0).expand((n_samples, ql_m.size(0), ql_m.size(1)))
-                ql_v = ql_v.unsqueeze(0).expand((n_samples, ql_v.size(0), ql_v.size(1)))
-                library = Normal(ql_m, ql_v.sqrt()).sample()
+        # if n_samples > 1:
+        #     qz_m = qz_m.unsqueeze(0).expand((n_samples, qz_m.size(0), qz_m.size(1)))
+        #     qz_v = qz_v.unsqueeze(0).expand((n_samples, qz_v.size(0), qz_v.size(1)))
+        #     # when z is normal, untran_z == z
+        #     untran_z = Normal(qz_m, qz_v.sqrt()).sample()
+        #     z = self.z_encoder.z_transformation(untran_z)
+        #     if self.use_observed_lib_size:
+        #         library = library.unsqueeze(0).expand(
+        #             (n_samples, library.size(0), library.size(1))
+        #         )
+        #     else:
+        #         ql_m = ql_m.unsqueeze(0).expand((n_samples, ql_m.size(0), ql_m.size(1)))
+        #         ql_v = ql_v.unsqueeze(0).expand((n_samples, ql_v.size(0), ql_v.size(1)))
+        #         library = Normal(ql_m, ql_v.sqrt()).sample()
 
         outputs = dict(z=z, qz_m=qz_m, qz_v=qz_v, ql_m=ql_m, ql_v=ql_v, library=library)
         return outputs
 
     @auto_move_data
+    @torch.jit.ignore
     def generative(
         self,
         z,
@@ -362,6 +391,7 @@ class VAE(BaseModuleClass):
             px_scale=px_scale, px_r=px_r, px_rate=px_rate, px_dropout=px_dropout
         )
 
+    @torch.jit.ignore
     def loss(
         self,
         tensors,
@@ -477,6 +507,7 @@ class VAE(BaseModuleClass):
 
         return exprs.cpu()
 
+    @torch.jit.ignore
     def get_reconstruction_loss(self, x, px_rate, px_r, px_dropout) -> torch.Tensor:
         if self.gene_likelihood == "zinb":
             reconst_loss = (
