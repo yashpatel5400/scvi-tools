@@ -322,14 +322,14 @@ class NegativeBinomial(Distribution):
             return counts
 
     def log_prob(self, value: torch.Tensor) -> torch.Tensor:
-        if self._validate_args:
-            try:
-                self._validate_sample(value)
-            except ValueError:
-                warnings.warn(
-                    "The value argument must be within the support of the distribution",
-                    UserWarning,
-                )
+        # if self._validate_args:
+        #     try:
+        #         self._validate_sample(value)
+        #     except ValueError:
+        #         warnings.warn(
+        #             "The value argument must be within the support of the distribution",
+        #             UserWarning,
+        #         )
 
         return log_nb_positive(value, mu=self.mu, theta=self.theta, eps=self._eps)
 
@@ -427,13 +427,13 @@ class ZeroInflatedNegativeBinomial(NegativeBinomial):
             return samp
 
     def log_prob(self, value: torch.Tensor) -> torch.Tensor:
-        try:
-            self._validate_sample(value)
-        except ValueError:
-            warnings.warn(
-                "The value argument must be within the support of the distribution",
-                UserWarning,
-            )
+        # try:
+        #     self._validate_sample(value)
+        # except ValueError:
+        #     warnings.warn(
+        #         "The value argument must be within the support of the distribution",
+        #         UserWarning,
+        #     )
         return log_zinb_positive(value, self.mu, self.theta, self.zi_logits, eps=1e-08)
 
 

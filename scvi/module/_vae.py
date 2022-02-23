@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Main module."""
-from typing import Callable, Iterable, Optional, Union
+from typing import Callable, Iterable, Optional, Union, Dict
 
 import numpy as np
 import torch
@@ -399,6 +399,22 @@ class VAE(BaseModuleClass):
         generative_outputs,
         kl_weight: float = 1.0,
     ):
+
+        return self._loss(
+            tensors,
+            inference_outputs,
+            generative_outputs,
+            kl_weight,
+        )
+
+    @torch.jit.ignore
+    def _loss(
+        self,
+        tensors: Dict[str, torch.Tensor],
+        inference_outputs: Dict[str, torch.Tensor],
+        generative_outputs: Dict[str, torch.Tensor],
+        kl_weight: float = 1.0,
+    ):
         x = tensors[REGISTRY_KEYS.X_KEY]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
 
@@ -507,7 +523,7 @@ class VAE(BaseModuleClass):
 
         return exprs.cpu()
 
-    @torch.jit.ignore
+    @torch.jit.export
     def get_reconstruction_loss(self, x, px_rate, px_r, px_dropout) -> torch.Tensor:
         if self.gene_likelihood == "zinb":
             reconst_loss = (
