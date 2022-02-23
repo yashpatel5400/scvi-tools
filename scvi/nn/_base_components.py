@@ -19,7 +19,7 @@ def identity(x):
     return x
 
 
-class FCLayers(nn.Module):
+class FCLayers(torch.jit.ScriptModule):
     """
     A helper class to build fully-connected layers for a neural network.
 
@@ -72,11 +72,11 @@ class FCLayers(nn.Module):
         self.inject_covariates = inject_covariates
         layers_dim = [n_in] + (n_layers - 1) * [n_hidden] + [n_out]
 
-        if n_cat_list is not None:
-            # n_cat = 1 will be ignored
-            self.n_cat_list = [n_cat if n_cat > 1 else 0 for n_cat in n_cat_list]
-        else:
-            self.n_cat_list = []
+        # if n_cat_list is not None:
+        #     # n_cat = 1 will be ignored
+        #     self.n_cat_list = [float(n_cat) if n_cat > 1 else 0 for n_cat in n_cat_list]
+        # else:
+        self.n_cat_list = []
 
         cat_dim = sum(self.n_cat_list)
         self.fc_layers = nn.Sequential(
@@ -86,8 +86,9 @@ class FCLayers(nn.Module):
                         "Layer {}".format(i),
                         nn.Sequential(
                             nn.Linear(
-                                n_in + cat_dim * self.inject_into_layer(i),
-                                n_out,
+                                int(n_in),
+                                # + int(cat_dim * self.inject_into_layer(i, None)),
+                                int(n_out),
                                 bias=bias,
                             ),
                             # non-default params come from defaults in original Tensorflow implementation
@@ -108,10 +109,12 @@ class FCLayers(nn.Module):
             )
         )
 
-    def inject_into_layer(self, layer_num) -> bool:
+    def inject_into_layer(self, layer_num: int, layer: nn.Module) -> bool:
         """Helper to determine if covariates should be injected."""
         user_cond = layer_num == 0 or (layer_num > 0 and self.inject_covariates)
-        return user_cond
+
+        layer_cond = layer is None or isinstance(layer, nn.Linear)
+        return user_cond and layer_cond
 
     def set_online_update_hooks(self, hook_first_layer=True):
         self.hooks = []
@@ -139,7 +142,8 @@ class FCLayers(nn.Module):
                     b = layer.bias.register_hook(_hook_fn_zero_out)
                     self.hooks.append(b)
 
-    def forward(self, x: torch.Tensor, *cat_list: int):
+    @torch.jit.script_method
+    def forward(self, x: torch.Tensor, cat_list: List[torch.Tensor]):
         """
         Forward computation on ``x``.
 
@@ -157,44 +161,45 @@ class FCLayers(nn.Module):
             tensor of shape ``(n_out,)``
 
         """
-        one_hot_cat_list = []  # for generality in this list many indices useless.
+        # one_hot_cat_list = []  # for generality in this list many indices useless.
 
-        if len(self.n_cat_list) > len(cat_list):
-            raise ValueError(
-                "nb. categorical args provided doesn't match init. params."
-            )
-        for n_cat, cat in zip(self.n_cat_list, cat_list):
-            if n_cat and cat is None:
-                raise ValueError("cat not provided while n_cat != 0 in init. params.")
-            if n_cat > 1:  # n_cat = 1 will be ignored - no additional information
-                if cat.size(1) != n_cat:
-                    one_hot_cat = one_hot(cat, n_cat)
-                else:
-                    one_hot_cat = cat  # cat has already been one_hot encoded
-                one_hot_cat_list += [one_hot_cat]
+        # if len(self.n_cat_list) > len(cat_list):
+        #     raise ValueError(
+        #         "nb. categorical args provided doesn't match init. params."
+        #     )
+        # for n_cat, cat in zip(self.n_cat_list, cat_list):
+        #     if n_cat and cat is None:
+        #         raise ValueError("cat not provided while n_cat != 0 in init. params.")
+        #     if n_cat > 1:  # n_cat = 1 will be ignored - no additional information
+        #         if cat.size(1) != n_cat:
+        #             one_hot_cat = one_hot(cat, int(n_cat))
+        #         else:
+        #             one_hot_cat = cat  # cat has already been one_hot encoded
+        #         one_hot_cat_list += [one_hot_cat]
         for i, layers in enumerate(self.fc_layers):
             for layer in layers:
                 if layer is not None:
-                    if isinstance(layer, nn.BatchNorm1d):
-                        if x.dim() == 3:
-                            x = torch.cat(
-                                [(layer(slice_x)).unsqueeze(0) for slice_x in x], dim=0
-                            )
-                        else:
-                            x = layer(x)
-                    else:
-                        if isinstance(layer, nn.Linear) and self.inject_into_layer(i):
-                            if x.dim() == 3:
-                                one_hot_cat_list_layer = [
-                                    o.unsqueeze(0).expand(
-                                        (x.size(0), o.size(0), o.size(1))
-                                    )
-                                    for o in one_hot_cat_list
-                                ]
-                            else:
-                                one_hot_cat_list_layer = one_hot_cat_list
-                            x = torch.cat((x, *one_hot_cat_list_layer), dim=-1)
-                        x = layer(x)
+                    # if isinstance(layer, nn.BatchNorm1d):
+                    #     if x.dim() == 3:
+                    #         x = torch.cat(
+                    #             [(layer(slice_x)).unsqueeze(0) for slice_x in x], dim=0
+                    #         )
+                    #     else:
+                    #         x = layer(x)
+                    # else:
+                    #     if self.inject_into_layer(i, layer):
+                    #         if x.dim() == 3:
+                    #             one_hot_cat_list_layer = [
+                    #                 o.unsqueeze(0).expand(
+                    #                     (x.size(0), o.size(0), o.size(1))
+                    #                 )
+                    #                 for o in one_hot_cat_list
+                    #             ]
+                    #         else:
+                    #             one_hot_cat_list_layer = one_hot_cat_list
+                    #         x = torch.cat((x, *one_hot_cat_list_layer), dim=-1)
+                    # else:
+                    x = layer(x)
         return x
 
 

@@ -288,12 +288,12 @@ class VAE(BaseModuleClass):
             categorical_input = torch.split(cat_covs, 1, dim=1)
         else:
             categorical_input = tuple()
-        qz_m, qz_v, z = self.z_encoder(encoder_input, batch_index, *categorical_input)
+        qz_m, qz_v, z = self.z_encoder(encoder_input, [batch_index, *categorical_input])
 
         ql_m, ql_v = None, None
         if not self.use_observed_lib_size:
             ql_m, ql_v, library_encoded = self.l_encoder(
-                encoder_input, batch_index, *categorical_input
+                encoder_input, [batch_index, *categorical_input]
             )
             library = library_encoded
 
@@ -345,9 +345,7 @@ class VAE(BaseModuleClass):
             self.dispersion,
             decoder_input,
             size_factor,
-            batch_index,
-            *categorical_input,
-            y,
+            [batch_index, *categorical_input, y],
         )
         if self.dispersion == "gene-label":
             px_r = F.linear(
