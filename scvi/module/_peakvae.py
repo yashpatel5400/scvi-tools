@@ -216,7 +216,7 @@ class PEAKVAE(BaseModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
         x = torch.sparse_coo_tensor(
             x[1], x[0], (batch_index.shape[0], self.n_input_regions)
-        ).coalesce()
+        )
         input_dict = dict(
             x=x,
             batch_index=batch_index,
