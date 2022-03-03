@@ -254,7 +254,6 @@ class PEAKVAE(BaseModuleClass):
         rows = inds[0]
         cols = inds[1]
         rl[(rows, cols)] = log_param[(rows, cols)]
-
         # rl = (
         #     (x * log_param).sum(-1)
         #     + one_minus_log_param.sum(-1)

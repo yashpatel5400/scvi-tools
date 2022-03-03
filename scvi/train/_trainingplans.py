@@ -271,7 +271,7 @@ class TrainingPlan(pl.LightningModule):
         if "kl_weight" in self.loss_kwargs:
             self.loss_kwargs.update({"kl_weight": self.kl_weight})
         _, _, scvi_loss = self.forward(batch, loss_kwargs=self.loss_kwargs)
-        self.log("train_loss", scvi_loss.loss, on_epoch=True)
+        # self.log("train_loss", scvi_loss.loss, on_epoch=True)
         self.compute_and_log_metrics(scvi_loss, self.elbo_train)
         return scvi_loss.loss
 
@@ -280,7 +280,7 @@ class TrainingPlan(pl.LightningModule):
         # so when relevant, the actual loss value is rescaled to number
         # of training examples
         _, _, scvi_loss = self.forward(batch, loss_kwargs=self.loss_kwargs)
-        self.log("validation_loss", scvi_loss.loss, on_epoch=True)
+        # self.log("validation_loss", scvi_loss.loss, on_epoch=True)
         self.compute_and_log_metrics(scvi_loss, self.elbo_val)
 
     def configure_optimizers(self):
