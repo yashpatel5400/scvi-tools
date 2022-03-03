@@ -247,13 +247,13 @@ class PEAKVAE(BaseModuleClass):
 
     def get_reconstruction_loss(self, p, d, f, x):
         parameter = p * d * f
-        log_param = torch.log(parameter)
+        # log_param = torch.log(parameter)
         one_minus_log_param = torch.log(1 - parameter)
         rl = one_minus_log_param
-        inds = x[1].long()
-        rows = inds[0]
-        cols = inds[1]
-        rl[(rows, cols)] = log_param[(rows, cols)]
+        # inds = x[1].long()
+        # rows = inds[0]
+        # cols = inds[1]
+        # rl[(rows, cols)] = log_param[(rows, cols)]
         # rl = (
         #     (x * log_param).sum(-1)
         #     + one_minus_log_param.sum(-1)
