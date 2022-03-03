@@ -172,13 +172,11 @@ class PEAKVAE(BaseModuleClass):
         )
 
         n_input_encoder = self.n_input_regions + n_continuous_cov * encode_covariates
-        encoder_cat_list = cat_list if encode_covariates else None
         self.z_encoder = Encoder(
             n_input=n_input_encoder,
             n_layers=self.n_layers_encoder,
             n_output=self.n_latent,
             n_hidden=self.n_hidden,
-            n_cat_list=encoder_cat_list,
             dropout_rate=self.dropout_rate,
             activation_fn=torch.nn.LeakyReLU,
             distribution=self.latent_distribution,
@@ -205,7 +203,6 @@ class PEAKVAE(BaseModuleClass):
                 n_input=n_input_encoder,
                 n_output=1,
                 n_hidden=self.n_hidden,
-                n_cat_list=encoder_cat_list,
                 n_layers=self.n_layers_encoder,
             )
         self.region_factors = None
@@ -213,10 +210,13 @@ class PEAKVAE(BaseModuleClass):
             self.region_factors = torch.nn.Parameter(torch.zeros(self.n_input_regions))
 
     def _get_inference_input(self, tensors):
-        x = tensors[REGISTRY_KEYS.X_KEY]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
         cont_covs = tensors.get(REGISTRY_KEYS.CONT_COVS_KEY)
         cat_covs = tensors.get(REGISTRY_KEYS.CAT_COVS_KEY)
+        x = tensors[REGISTRY_KEYS.X_KEY]
+        x = torch.sparse_coo_tensor(
+            x[1], x[0], (batch_index.shape[0], self.n_input_regions)
+        ).coalesce()
         input_dict = dict(
             x=x,
             batch_index=batch_index,
@@ -246,8 +246,23 @@ class PEAKVAE(BaseModuleClass):
         return input_dict
 
     def get_reconstruction_loss(self, p, d, f, x):
-        rl = torch.nn.BCELoss(reduction="none")(p * d * f, (x > 0).float()).sum(dim=-1)
-        return rl
+        parameter = p * d * f
+        log_param = torch.log(parameter)
+        one_minus_log_param = torch.log(1 - parameter)
+        rl = one_minus_log_param
+        print(x[1])
+        inds = x[1].long()
+        rows = inds[0]
+        cols = inds[1]
+        rl[(rows, cols)] = log_param[(rows, cols)]
+
+        # rl = (
+        #     (x * log_param).sum(-1)
+        #     + one_minus_log_param.sum(-1)
+        #     - (x * one_minus_log_param).sum(-1)
+        # )
+        # rl = torch.nn.BCELoss(reduction="none")(p * d * f, (x > 0).float()).sum(dim=-1)
+        return rl.sum(-1)
 
     @auto_move_data
     def inference(
@@ -259,22 +274,10 @@ class PEAKVAE(BaseModuleClass):
         n_samples=1,
     ) -> Dict[str, torch.Tensor]:
         """Helper function used in forward pass."""
-        if cat_covs is not None and self.encode_covariates:
-            categorical_input = torch.split(cat_covs, 1, dim=1)
-        else:
-            categorical_input = tuple()
-        if cont_covs is not None and self.encode_covariates:
-            encoder_input = torch.cat([x, cont_covs], dim=-1)
-        else:
-            encoder_input = x
         # if encode_covariates is False, cat_list to init encoder is None, so
         # batch_index is not used (or categorical_input, but it's empty)
-        qz_m, qz_v, z = self.z_encoder(encoder_input, batch_index, *categorical_input)
-        d = (
-            self.d_encoder(encoder_input, batch_index, *categorical_input)
-            if self.model_depth
-            else 1
-        )
+        qz_m, qz_v, z = self.z_encoder(x)
+        d = self.d_encoder(x) if self.model_depth else 1
 
         if n_samples > 1:
             qz_m = qz_m.unsqueeze(0).expand((n_samples, qz_m.size(0), qz_m.size(1)))
@@ -283,7 +286,7 @@ class PEAKVAE(BaseModuleClass):
             untran_z = Normal(qz_m, qz_v.sqrt()).sample()
             z = self.z_encoder.z_transformation(untran_z)
 
-        return dict(d=d, qz_m=qz_m, qz_v=qz_v, z=z)
+        return dict(d=d, qz_m=qz_m, qz_v=qz_v, z=z, x=x)
 
     @auto_move_data
     def generative(

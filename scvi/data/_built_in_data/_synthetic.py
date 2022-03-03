@@ -3,6 +3,7 @@ import logging
 import numpy as np
 import pandas as pd
 from anndata import AnnData
+from scipy.sparse import csr_matrix
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ def _generate_synthetic(
 
     data = np.random.negative_binomial(5, 0.3, size=(batch_size * n_batches, n_genes))
     mask = np.random.binomial(n=1, p=0.7, size=(batch_size * n_batches, n_genes))
-    data = data * mask  # We put the batch index first
+    data = csr_matrix(data * mask)  # We put the batch index first
     labels = np.random.randint(0, n_labels, size=(batch_size * n_batches,))
     labels = np.array(["label_%d" % i for i in labels])
 

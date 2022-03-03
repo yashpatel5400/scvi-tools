@@ -20,7 +20,9 @@ class AnnTorchDataset(Dataset):
         self,
         adata_manager: AnnDataManager,
         getitem_tensors: Union[List[str], Dict[str, type]] = None,
+        send_sparse_parts: bool = True,
     ):
+        self.send_sparse_parts = send_sparse_parts
         self.adata_manager = adata_manager
         self.is_backed = adata_manager.adata.isbacked
         self.attributes_and_types = None
@@ -114,7 +116,14 @@ class AnnTorchDataset(Dataset):
             elif isinstance(cur_data, pd.DataFrame):
                 sliced_data = cur_data.iloc[idx, :].to_numpy().astype(dtype)
             elif issparse(cur_data):
-                sliced_data = cur_data[idx].toarray().astype(dtype)
+                sliced_data = cur_data[idx]
+                if not self.send_sparse_parts:
+                    sliced_data = sliced_data.toarray().astype(dtype)
+                else:
+                    coo = sliced_data.tocoo()
+                    values = coo.data.astype(dtype)
+                    indices = np.vstack((coo.row, coo.col)).astype(np.int64)
+                    sliced_data = (values, indices)
             else:
                 raise TypeError(f"{key} is not a supported type")
             data_numpy[key] = sliced_data
