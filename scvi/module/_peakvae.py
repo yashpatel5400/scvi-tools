@@ -250,7 +250,6 @@ class PEAKVAE(BaseModuleClass):
         log_param = torch.log(parameter)
         one_minus_log_param = torch.log(1 - parameter)
         rl = one_minus_log_param
-        print(x[1])
         inds = x[1].long()
         rows = inds[0]
         cols = inds[1]
