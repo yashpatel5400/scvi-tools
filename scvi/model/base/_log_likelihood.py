@@ -1,5 +1,6 @@
 """File for computing log likelihood of the data."""
 import torch
+from scvi.utils import attrdict
 
 
 def compute_elbo(vae, data_loader, feed_labels=True, **kwargs):
@@ -21,7 +22,7 @@ def compute_elbo(vae, data_loader, feed_labels=True, **kwargs):
         recon_loss = scvi_loss.reconstruction_loss
         kl_local = scvi_loss.kl_local
         elbo += torch.sum(recon_loss + kl_local).item()
-
+        scvi_loss = attrdict(scvi_loss)
     kl_global = scvi_loss.kl_global
     n_samples = len(data_loader.indices)
     elbo += kl_global

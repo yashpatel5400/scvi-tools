@@ -84,6 +84,30 @@ LEGACY_SETUP_DICT = {
 }
 
 
+def test_aot():
+    from functorch.compile import ts_compile, aot_module
+    import torch.utils._pytree as pytree
+
+    def _odict_flatten(d):
+        return list(d.values()), list(d.keys())
+
+    def _odict_unflatten(values, context):
+        return {key: value for key, value in zip(context, values)}
+
+    pytree._register_pytree_node(dict, _odict_flatten, _odict_unflatten)
+
+    n_latent = 5
+
+    # Test with size factor.
+    adata = synthetic_iid()
+    adata.obs["size_factor"] = np.random.randint(1, 5, size=(adata.shape[0],))
+    SCVI.setup_anndata(adata)
+    model = SCVI(adata, n_latent=n_latent)
+    model.module = aot_module(model.module, ts_compile, ts_compile)
+    model.is_trained = True
+    model.get_elbo()
+
+
 def test_jax_scvi():
     n_latent = 5
 

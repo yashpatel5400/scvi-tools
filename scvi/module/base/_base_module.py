@@ -8,6 +8,7 @@ from flax import linen
 from numpyro.distributions import Distribution
 from pyro.infer.predictive import Predictive
 
+from scvi.utils import attrdict
 from ._decorators import auto_move_data
 from ._pyro import AutoMoveDataPredictive
 
@@ -107,6 +108,15 @@ class LossRecorder:
     @property
     def kl_global(self) -> Union[torch.Tensor, jnp.ndarray]:
         return self._get_dict_sum(self._kl_global)
+
+    def to_dict(self):
+        dictionary = dict(
+            loss=self.loss,
+            reconstruction_loss=self.reconstruction_loss,
+            kl_local=self.kl_local,
+            kl_global=self.kl_global,
+        )
+        return dictionary
 
 
 class BaseModuleClass(nn.Module):
