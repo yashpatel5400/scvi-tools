@@ -9,6 +9,7 @@ from numpyro.distributions import Distribution
 from pyro.infer.predictive import Predictive
 
 from scvi.utils import attrdict
+
 from ._decorators import auto_move_data
 from ._pyro import AutoMoveDataPredictive
 

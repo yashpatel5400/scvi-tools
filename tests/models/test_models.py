@@ -100,7 +100,6 @@ def test_aot():
 
     # Test with size factor.
     adata = synthetic_iid()
-    adata.obs["size_factor"] = np.random.randint(1, 5, size=(adata.shape[0],))
     SCVI.setup_anndata(adata)
     model = SCVI(adata, n_latent=n_latent)
     model.module = aot_module(model.module, ts_compile, ts_compile)
