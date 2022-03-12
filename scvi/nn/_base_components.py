@@ -86,7 +86,7 @@ class FCLayers(nn.Module):
                         "Layer {}".format(i),
                         nn.Sequential(
                             nn.Linear(
-                                n_in + cat_dim * self.inject_into_layer(i),
+                                n_in,
                                 n_out,
                                 bias=bias,
                             ),
@@ -139,7 +139,7 @@ class FCLayers(nn.Module):
                     b = layer.bias.register_hook(_hook_fn_zero_out)
                     self.hooks.append(b)
 
-    def forward(self, x: torch.Tensor, *cat_list: int):
+    def forward(self, x: torch.Tensor):
         """
         Forward computation on ``x``.
 
@@ -157,44 +157,7 @@ class FCLayers(nn.Module):
             tensor of shape ``(n_out,)``
 
         """
-        one_hot_cat_list = []  # for generality in this list many indices useless.
-
-        if len(self.n_cat_list) > len(cat_list):
-            raise ValueError(
-                "nb. categorical args provided doesn't match init. params."
-            )
-        for n_cat, cat in zip(self.n_cat_list, cat_list):
-            if n_cat and cat is None:
-                raise ValueError("cat not provided while n_cat != 0 in init. params.")
-            if n_cat > 1:  # n_cat = 1 will be ignored - no additional information
-                if cat.size(1) != n_cat:
-                    one_hot_cat = one_hot(cat, n_cat)
-                else:
-                    one_hot_cat = cat  # cat has already been one_hot encoded
-                one_hot_cat_list += [one_hot_cat]
-        for i, layers in enumerate(self.fc_layers):
-            for layer in layers:
-                if layer is not None:
-                    if isinstance(layer, nn.BatchNorm1d):
-                        if x.dim() == 3:
-                            x = torch.cat(
-                                [(layer(slice_x)).unsqueeze(0) for slice_x in x], dim=0
-                            )
-                        else:
-                            x = layer(x)
-                    else:
-                        if isinstance(layer, nn.Linear) and self.inject_into_layer(i):
-                            if x.dim() == 3:
-                                one_hot_cat_list_layer = [
-                                    o.unsqueeze(0).expand(
-                                        (x.size(0), o.size(0), o.size(1))
-                                    )
-                                    for o in one_hot_cat_list
-                                ]
-                            else:
-                                one_hot_cat_list_layer = one_hot_cat_list
-                            x = torch.cat((x, *one_hot_cat_list_layer), dim=-1)
-                        x = layer(x)
+        x = self.fc_layers(x)
         return x
 
 

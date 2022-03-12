@@ -85,8 +85,8 @@ LEGACY_SETUP_DICT = {
 
 
 def test_aot():
-    from functorch.compile import ts_compile, aot_module
     import torch.utils._pytree as pytree
+    from functorch.compile import aot_module, ts_compile
 
     def _odict_flatten(d):
         return list(d.values()), list(d.keys())
@@ -96,15 +96,29 @@ def test_aot():
 
     pytree._register_pytree_node(dict, _odict_flatten, _odict_unflatten)
 
+    from collections import OrderedDict
+
+    # Temporary OrderedDict registration as pytree
+    def _odict_flatten(d):
+        return list(d.values()), list(d.keys())
+
+    def _odict_unflatten(values, context):
+        return OrderedDict((key, value) for key, value in zip(context, values))
+
+    pytree._register_pytree_node(OrderedDict, _odict_flatten, _odict_unflatten)
+
     n_latent = 5
 
     # Test with size factor.
     adata = synthetic_iid()
     SCVI.setup_anndata(adata)
     model = SCVI(adata, n_latent=n_latent)
-    model.module = aot_module(model.module, ts_compile, ts_compile)
-    model.is_trained = True
-    model.get_elbo()
+    aot = aot_module(model.module.z_encoder.encoder, ts_compile, ts_compile)
+    aot(torch.zeros(128, 100))
+
+    # model.module = aot_module(model.module, ts_compile, ts_compile)
+    # model.is_trained = True
+    # model.get_elbo()
 
 
 def test_jax_scvi():
