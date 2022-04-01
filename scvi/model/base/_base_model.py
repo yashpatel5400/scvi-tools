@@ -13,10 +13,11 @@ import torch
 from anndata import AnnData
 
 from scvi import settings
+from scvi._types import AnnOrMuData
 from scvi.data import AnnDataManager
 from scvi.data._compat import manager_from_setup_dict
 from scvi.data._constants import _MODEL_NAME_KEY, _SCVI_UUID_KEY, _SETUP_ARGS_KEY
-from scvi.data._utils import _assign_adata_uuid
+from scvi.data._utils import _assign_adata_uuid, _check_if_view
 from scvi.dataloaders import AnnDataLoader
 from scvi.model._utils import parse_use_gpu_arg
 from scvi.module.base import PyroBaseModuleClass
@@ -57,7 +58,7 @@ class BaseModelMetaClass(ABCMeta):
 class BaseModelClass(metaclass=BaseModelMetaClass):
     """Abstract class for scvi-tools models."""
 
-    def __init__(self, adata: Optional[AnnData] = None):
+    def __init__(self, adata: Optional[AnnOrMuData] = None):
         self.id = str(uuid4())  # Used for cls._manager_store keys.
         if adata is not None:
             self._adata = adata
@@ -78,12 +79,12 @@ class BaseModelClass(metaclass=BaseModelMetaClass):
         self._data_loader_cls = AnnDataLoader
 
     @property
-    def adata(self) -> AnnData:
+    def adata(self) -> AnnOrMuData:
         """Data attached to model instance."""
         return self._adata
 
     @adata.setter
-    def adata(self, adata: AnnData):
+    def adata(self, adata: AnnOrMuData):
         if adata is None:
             raise ValueError("adata cannot be None.")
         self._validate_anndata(adata)
@@ -173,7 +174,7 @@ class BaseModelClass(metaclass=BaseModelMetaClass):
 
     @classmethod
     def _get_most_recent_anndata_manager(
-        cls, adata: AnnData, required: bool = False
+        cls, adata: AnnOrMuData, required: bool = False
     ) -> Optional[AnnDataManager]:
         """
         Retrieves the :class:`~scvi.data.AnnDataManager` for a given AnnData object specific to this model class.
@@ -216,7 +217,7 @@ class BaseModelClass(metaclass=BaseModelMetaClass):
         return adata_manager
 
     def get_anndata_manager(
-        self, adata: AnnData, required: bool = False
+        self, adata: AnnOrMuData, required: bool = False
     ) -> Optional[AnnDataManager]:
         """
         Retrieves the :class:`~scvi.data.AnnDataManager` for a given AnnData object specific to this model instance.
@@ -267,7 +268,7 @@ class BaseModelClass(metaclass=BaseModelMetaClass):
 
     def get_from_registry(
         self,
-        adata: AnnData,
+        adata: AnnOrMuData,
         registry_key: str,
     ) -> np.ndarray:
         """
@@ -297,7 +298,7 @@ class BaseModelClass(metaclass=BaseModelMetaClass):
 
     def _make_data_loader(
         self,
-        adata: AnnData,
+        adata: AnnOrMuData,
         indices: Optional[Sequence[int]] = None,
         batch_size: Optional[int] = None,
         shuffle: bool = False,
@@ -350,19 +351,13 @@ class BaseModelClass(metaclass=BaseModelMetaClass):
         return dl
 
     def _validate_anndata(
-        self, adata: Optional[AnnData] = None, copy_if_view: bool = True
+        self, adata: Optional[AnnOrMuData] = None, copy_if_view: bool = True
     ) -> AnnData:
         """Validate anndata has been properly registered, transfer if necessary."""
         if adata is None:
             adata = self.adata
-        if adata.is_view:
-            if copy_if_view:
-                logger.info("Received view of anndata, making copy.")
-                adata._init_as_actual(adata.copy())
-                # Reassign AnnData UUID to produce a separate AnnDataManager.
-                _assign_adata_uuid(adata, overwrite=True)
-            else:
-                raise ValueError("Please run `adata = adata.copy()`")
+
+        _check_if_view(adata, copy_if_view=copy_if_view)
 
         adata_manager = self.get_anndata_manager(adata)
         if adata_manager is None:
@@ -699,7 +694,7 @@ class BaseModelClass(metaclass=BaseModelMetaClass):
         AnnDataManager.view_setup_method_args(registry)
 
     def view_anndata_setup(
-        self, adata: Optional[AnnData] = None, hide_state_registries: bool = False
+        self, adata: Optional[AnnOrMuData] = None, hide_state_registries: bool = False
     ) -> None:
         """
         Print summary of the setup for the initial AnnData or a given AnnData object.
