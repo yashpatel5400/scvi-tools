@@ -81,7 +81,7 @@ def _load_saved_files(
     is_mudata = False
     if "registry_" in attr_dict:
         registry = attr_dict["registry_"]
-        is_mudata = getattr(registry, _SETUP_METHOD_NAME, None) == "setup_mudata"
+        is_mudata = registry.get(_SETUP_METHOD_NAME) == "setup_mudata"
     file_suffix = "adata.h5ad" if not is_mudata else "mdata.h5mu"
     adata_path = os.path.join(dir_path, f"{file_name_prefix}{file_suffix}")
 
