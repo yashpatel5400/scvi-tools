@@ -5,13 +5,15 @@ import warnings
 from collections.abc import Iterable as IterableClass
 from typing import List, Optional, Tuple, Union
 
+import anndata
+import mudata
 import numpy as np
 import pandas as pd
 import torch
-from anndata import AnnData, read
 from sklearn.utils import deprecated
 
 from scvi._compat import Literal
+from scvi.data._constants import _SETUP_METHOD_NAME
 from scvi.utils import track
 
 from ._differential import DifferentialComputation
@@ -59,21 +61,11 @@ def _load_saved_files(
     load_adata: bool,
     prefix: Optional[str] = None,
     map_location: Optional[Literal["cpu", "cuda"]] = None,
-) -> Tuple[dict, np.ndarray, dict, AnnData]:
+) -> Tuple[dict, np.ndarray, dict, anndata.AnnData]:
     """Helper to load saved files."""
     file_name_prefix = prefix or ""
-    adata_path = os.path.join(dir_path, f"{file_name_prefix}adata.h5ad")
-
-    if os.path.exists(adata_path) and load_adata:
-        adata = read(adata_path)
-    elif not os.path.exists(adata_path) and load_adata:
-        raise ValueError("Save path contains no saved anndata and no adata was passed.")
-    else:
-        adata = None
-
     use_legacy = _should_use_legacy_saved_files(dir_path, file_name_prefix)
 
-    # TODO(jhong): Remove once legacy load is deprecated.
     if use_legacy:
         model_state_dict, var_names, attr_dict = _load_legacy_saved_files(
             dir_path, file_name_prefix, map_location
@@ -85,6 +77,23 @@ def _load_saved_files(
         model_state_dict = model["model_state_dict"]
         var_names = model["var_names"]
         attr_dict = model["attr_dict"]
+
+    is_mudata = False
+    if "registry_" in attr_dict:
+        registry = attr_dict["registry_"]
+        is_mudata = getattr(registry, _SETUP_METHOD_NAME, None) == "setup_mudata"
+    file_suffix = "adata.h5ad" if not is_mudata else "mdata.h5mu"
+    adata_path = os.path.join(dir_path, f"{file_name_prefix}{file_suffix}")
+
+    if os.path.exists(adata_path) and load_adata:
+        if is_mudata:
+            adata = mudata.read(adata_path)
+        else:
+            adata = anndata.read(adata_path)
+    elif not os.path.exists(adata_path) and load_adata:
+        raise ValueError("Save path contains no saved anndata and no adata was passed.")
+    else:
+        adata = None
 
     return attr_dict, var_names, model_state_dict, adata
 
@@ -141,7 +150,7 @@ def _validate_var_names(adata, source_var_names):
 def _prepare_obs(
     idx1: Union[List[bool], np.ndarray, str],
     idx2: Union[List[bool], np.ndarray, str],
-    adata: AnnData,
+    adata: anndata.AnnData,
 ):
     """
     Construct an array used for masking.
