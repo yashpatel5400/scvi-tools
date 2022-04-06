@@ -255,17 +255,17 @@ class MULTIVAE(BaseModuleClass):
 
         # Get Data and Additional Covs
         x_rna = x[:, : self.n_input_genes]
-        x_chr = x[:, self.n_input_genes :]
+        x_spt = x[:, self.n_input_genes :]
 
         mask_expr = x_rna.sum(dim=1) > 0
-        mask_spat = x_chr.sum(dim=1) > 0
+        mask_spat = x_spt.sum(dim=1) > 0
 
         if cont_covs is not None and self.encode_covariates:
             encoder_input_expression = torch.cat((x_rna, cont_covs), dim=-1)
-            encoder_input_spatial = torch.cat((x_chr, cont_covs), dim=-1)
+            encoder_input_spatial = torch.cat((x_spt, cont_covs), dim=-1)
         else:
             encoder_input_expression = x_rna
-            encoder_input_spatial = x_chr
+            encoder_input_spatial = x_spt
 
         if cat_covs is not None and self.encode_covariates:
             categorical_input = torch.split(cat_covs, 1, dim=1)
@@ -414,10 +414,10 @@ class MULTIVAE(BaseModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
 
         x_rna = x[:, : self.n_input_genes]
-        x_chr = x[:, self.n_input_genes :]
+        x_spt = x[:, self.n_input_genes :]
 
         mask_expr = x_rna.sum(dim=1) > 0
-        mask_spat = x_chr.sum(dim=1) > 0
+        mask_spat = x_spt.sum(dim=1) > 0
 
         # Compute Spatial loss
         x_spatial = x[:, self.n_input_genes :]
