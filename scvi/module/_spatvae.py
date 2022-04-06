@@ -51,8 +51,8 @@ class MULTIVAE(BaseModuleClass):
 
     Parameters
     ----------
-    n_input_regions
-        Number of input regions.
+    n_spatial_dims
+        Number of spatial dimensions (default=2).
     n_input_genes
         Number of input genes.
     n_batch
@@ -74,8 +74,6 @@ class MULTIVAE(BaseModuleClass):
         Number of hidden layers used for decoder NN.
     dropout_rate
         Dropout rate for neural networks
-    region_factors
-        Include region-specific factors in the model
     use_batch_norm
         One of the following
         * ``'encoder'`` - use batch normalization in the encoder only
@@ -101,10 +99,10 @@ class MULTIVAE(BaseModuleClass):
         Use size_factor AnnDataField defined by the user as scaling factor in mean of conditional RNA distribution.
     """
 
-    ## TODO: replace n_input_regions and n_input_genes with a gene/region mask (we don't dictate which comes forst or that they're even contiguous)
+    ## TODO: replace n_spatial_dims and n_input_genes with a gene/region mask (we don't dictate which comes forst or that they're even contiguous)
     def __init__(
         self,
-        n_input_regions: int = 0,
+        n_spatial_dims: int = 2,
         n_input_genes: int = 0,
         n_batch: int = 0,
         gene_likelihood: Literal["zinb", "nb", "poisson"] = "zinb",
@@ -126,10 +124,10 @@ class MULTIVAE(BaseModuleClass):
         super().__init__()
 
         # INIT PARAMS
-        self.n_input_regions = n_input_regions
+        self.n_spatial_dims = n_spatial_dims
         self.n_input_genes = n_input_genes
         self.n_hidden = (
-            int(np.sqrt(self.n_input_regions + self.n_input_genes))
+            int(np.sqrt(self.n_spatial_dims + self.n_input_genes))
             if n_hidden is None
             else n_hidden
         )
@@ -157,15 +155,15 @@ class MULTIVAE(BaseModuleClass):
             [n_batch] + list(n_cats_per_cov) if n_cats_per_cov is not None else []
         )
 
-        n_input_encoder_acc = (
-            self.n_input_regions + n_continuous_cov * encode_covariates
+        n_input_encoder_spat = (
+            self.n_spatial_dims + n_continuous_cov * encode_covariates
         )
         n_input_encoder_exp = self.n_input_genes + n_continuous_cov * encode_covariates
         encoder_cat_list = cat_list if encode_covariates else None
 
-        ## accessibility encoder
-        self.z_encoder_accessibility = Encoder(
-            n_input=n_input_encoder_acc,
+        ## spatial encoder
+        self.z_encoder_spatial = Encoder(
+            n_input=n_input_encoder_spat,
             n_layers=self.n_layers_encoder,
             n_output=self.n_latent,
             n_hidden=self.n_hidden,
@@ -206,10 +204,10 @@ class MULTIVAE(BaseModuleClass):
             scale_activation="softplus" if use_size_factor_key else "softmax",
         )
 
-        # accessibility decoder
-        self.z_decoder_accessibility = DecoderPeakVI(
+        # spatial decoder
+        self.z_decoder_spatial = DecoderPeakVI(
             n_input=self.n_latent + self.n_continuous_cov,
-            n_output=n_input_regions,
+            n_output=n_spatial_dims,
             n_hidden=self.n_hidden,
             n_cat_list=cat_list,
             n_layers=self.n_layers_decoder,
@@ -217,11 +215,6 @@ class MULTIVAE(BaseModuleClass):
             use_layer_norm=self.use_layer_norm_decoder,
             deep_inject_covariates=self.deeply_inject_covariates,
         )
-
-        ## accessibility region-specific factors
-        self.region_factors = None
-        if region_factors:
-            self.region_factors = torch.nn.Parameter(torch.zeros(self.n_input_regions))
 
         ## expression dispersion parameters
         self.px_r = torch.nn.Parameter(torch.randn(n_input_genes))
@@ -232,18 +225,6 @@ class MULTIVAE(BaseModuleClass):
             n_cat_list=encoder_cat_list,
             n_layers=self.n_layers_encoder,
             n_hidden=self.n_hidden,
-            use_batch_norm=self.use_batch_norm_encoder,
-            use_layer_norm=self.use_layer_norm_encoder,
-            deep_inject_covariates=self.deeply_inject_covariates,
-        )
-
-        ## accessibility library size encoder
-        self.l_encoder_accessibility = DecoderPeakVI(
-            n_input=n_input_encoder_acc,
-            n_output=1,
-            n_hidden=self.n_hidden,
-            n_cat_list=encoder_cat_list,
-            n_layers=self.n_layers_encoder,
             use_batch_norm=self.use_batch_norm_encoder,
             use_layer_norm=self.use_layer_norm_encoder,
             deep_inject_covariates=self.deeply_inject_covariates,
@@ -277,14 +258,14 @@ class MULTIVAE(BaseModuleClass):
         x_chr = x[:, self.n_input_genes :]
 
         mask_expr = x_rna.sum(dim=1) > 0
-        mask_acc = x_chr.sum(dim=1) > 0
+        mask_spat = x_chr.sum(dim=1) > 0
 
         if cont_covs is not None and self.encode_covariates:
             encoder_input_expression = torch.cat((x_rna, cont_covs), dim=-1)
-            encoder_input_accessibility = torch.cat((x_chr, cont_covs), dim=-1)
+            encoder_input_spatial = torch.cat((x_chr, cont_covs), dim=-1)
         else:
             encoder_input_expression = x_rna
-            encoder_input_accessibility = x_chr
+            encoder_input_spatial = x_chr
 
         if cat_covs is not None and self.encode_covariates:
             categorical_input = torch.split(cat_covs, 1, dim=1)
@@ -292,8 +273,8 @@ class MULTIVAE(BaseModuleClass):
             categorical_input = tuple()
 
         # Z Encoders
-        qzm_acc, qzv_acc, z_acc = self.z_encoder_accessibility(
-            encoder_input_accessibility, batch_index, *categorical_input
+        qzm_spat, qzv_spat, z_spat = self.z_encoder_spatial(
+            encoder_input_spatial, batch_index, *categorical_input
         )
         qzm_expr, qzv_expr, z_expr = self.z_encoder_expression(
             encoder_input_expression, batch_index, *categorical_input
@@ -303,20 +284,17 @@ class MULTIVAE(BaseModuleClass):
         libsize_expr = self.l_encoder_expression(
             encoder_input_expression, batch_index, *categorical_input
         )
-        libsize_acc = self.l_encoder_accessibility(
-            encoder_input_accessibility, batch_index, *categorical_input
-        )
 
         # ReFormat Outputs
         if n_samples > 1:
-            qzm_acc = qzm_acc.unsqueeze(0).expand(
-                (n_samples, qzm_acc.size(0), qzm_acc.size(1))
+            qzm_spat = qzm_spat.unsqueeze(0).expand(
+                (n_samples, qzm_spat.size(0), qzm_spat.size(1))
             )
-            qzv_acc = qzv_acc.unsqueeze(0).expand(
-                (n_samples, qzv_acc.size(0), qzv_acc.size(1))
+            qzv_spat = qzv_spat.unsqueeze(0).expand(
+                (n_samples, qzv_spat.size(0), qzv_spat.size(1))
             )
-            untran_za = Normal(qzm_acc, qzv_acc.sqrt()).sample()
-            z_acc = self.z_encoder_accessibility.z_transformation(untran_za)
+            untran_za = Normal(qzm_spat, qzv_spat.sqrt()).sample()
+            z_spat = self.z_encoder_spatial.z_transformation(untran_za)
 
             qzm_expr = qzm_expr.unsqueeze(0).expand(
                 (n_samples, qzm_expr.size(0), qzm_expr.size(1))
@@ -330,19 +308,16 @@ class MULTIVAE(BaseModuleClass):
             libsize_expr = libsize_expr.unsqueeze(0).expand(
                 (n_samples, libsize_expr.size(0), libsize_expr.size(1))
             )
-            libsize_acc = libsize_acc.unsqueeze(0).expand(
-                (n_samples, libsize_acc.size(0), libsize_acc.size(1))
-            )
-
+            
         ## Sample from the average distribution
-        qzp_m = (qzm_acc + qzm_expr) / 2
-        qzp_v = (qzv_acc + qzv_expr) / (2**0.5)
+        qzp_m = (qzm_spat + qzm_expr) / 2
+        qzp_v = (qzv_spat + qzv_expr) / (2**0.5)
         zp = Normal(qzp_m, qzp_v.sqrt()).rsample()
 
         ## choose the correct latent representation based on the modality
-        qz_m = self._mix_modalities(qzp_m, qzm_expr, qzm_acc, mask_expr, mask_acc)
-        qz_v = self._mix_modalities(qzp_v, qzv_expr, qzv_acc, mask_expr, mask_acc)
-        z = self._mix_modalities(zp, z_expr, z_acc, mask_expr, mask_acc)
+        qz_m = self._mix_modalities(qzp_m, qzm_expr, qzm_spat, mask_expr, mask_spat)
+        qz_v = self._mix_modalities(qzp_v, qzv_expr, qzv_spat, mask_expr, mask_spat)
+        z = self._mix_modalities(zp, z_expr, z_spat, mask_expr, mask_spat)
 
         outputs = dict(
             z=z,
@@ -351,11 +326,10 @@ class MULTIVAE(BaseModuleClass):
             z_expr=z_expr,
             qzm_expr=qzm_expr,
             qzv_expr=qzv_expr,
-            z_acc=z_acc,
-            qzm_acc=qzm_acc,
-            qzv_acc=qzv_acc,
+            z_spat=z_spat,
+            qzm_spat=qzm_spat,
+            qzv_spat=qzv_spat,
             libsize_expr=libsize_expr,
-            libsize_acc=libsize_acc,
         )
         return outputs
 
@@ -415,8 +389,8 @@ class MULTIVAE(BaseModuleClass):
             latent if cont_covs is None else torch.cat([latent, cont_covs], dim=-1)
         )
 
-        # Accessibility Decoder
-        p = self.z_decoder_accessibility(decoder_input, batch_index, *categorical_input)
+        # Spatial Decoder
+        p = self.z_decoder_spatial(decoder_input, batch_index, *categorical_input)
 
         # Expression Decoder
         if not self.use_size_factor_key:
@@ -443,14 +417,13 @@ class MULTIVAE(BaseModuleClass):
         x_chr = x[:, self.n_input_genes :]
 
         mask_expr = x_rna.sum(dim=1) > 0
-        mask_acc = x_chr.sum(dim=1) > 0
+        mask_spat = x_chr.sum(dim=1) > 0
 
-        # Compute Accessibility loss
-        x_accessibility = x[:, self.n_input_genes :]
+        # Compute Spatial loss
+        x_spatial = x[:, self.n_input_genes :]
         p = generative_outputs["p"]
-        libsize_acc = inference_outputs["libsize_acc"]
-        rl_accessibility = self.get_reconstruction_loss_accessibility(
-            x_accessibility, p, libsize_acc
+        rl_spatial = self.get_reconstruction_loss_spatial(
+            x_spatial, p
         )
 
         # Compute Expression loss
@@ -464,11 +437,11 @@ class MULTIVAE(BaseModuleClass):
 
         # mix losses to get the correct loss for each cell
         recon_loss = self._mix_modalities(
-            rl_accessibility + rl_expression,  # paired
+            rl_spatial + rl_expression,  # paired
             rl_expression,  # expression
-            rl_accessibility,  # accessibility
+            rl_spatial,  # spatial
             mask_expr,
-            mask_acc,
+            mask_spat,
         )
 
         # Compute KLD between Z and N(0,I)
@@ -482,15 +455,15 @@ class MULTIVAE(BaseModuleClass):
         # Compute KLD between distributions for paired data
         qzm_expr = inference_outputs["qzm_expr"]
         qzv_expr = inference_outputs["qzv_expr"]
-        qzm_acc = inference_outputs["qzm_acc"]
-        qzv_acc = inference_outputs["qzv_acc"]
+        qzm_spat = inference_outputs["qzm_spat"]
+        qzv_spat = inference_outputs["qzv_spat"]
         kld_paired = kld(
-            Normal(qzm_expr, torch.sqrt(qzv_expr)), Normal(qzm_acc, torch.sqrt(qzv_acc))
+            Normal(qzm_expr, torch.sqrt(qzv_expr)), Normal(qzm_spat, torch.sqrt(qzv_spat))
         ) + kld(
-            Normal(qzm_acc, torch.sqrt(qzv_acc)), Normal(qzm_expr, torch.sqrt(qzv_expr))
+            Normal(qzm_spat, torch.sqrt(qzv_spat)), Normal(qzm_expr, torch.sqrt(qzv_expr))
         )
         kld_paired = torch.where(
-            torch.logical_and(mask_acc, mask_expr),
+            torch.logical_and(mask_spat, mask_expr),
             kld_paired.T,
             torch.zeros_like(kld_paired).T,
         ).sum(dim=0)
@@ -500,7 +473,7 @@ class MULTIVAE(BaseModuleClass):
         weighted_kl_local = kl_weight * kl_local_for_warmup
 
         # PENALTY
-        # distance_penalty = kl_weight * torch.pow(z_acc - z_expr, 2).sum(dim=1)
+        # distance_penalty = kl_weight * torch.pow(z_spat - z_expr, 2).sum(dim=1)
 
         # TOTAL LOSS
         loss = torch.mean(recon_loss + weighted_kl_local + kld_paired)
@@ -525,38 +498,37 @@ class MULTIVAE(BaseModuleClass):
             rl = -Poisson(px_rate).log_prob(x).sum(dim=-1)
         return rl
 
-    def get_reconstruction_loss_accessibility(self, x, p, d):
-        f = torch.sigmoid(self.region_factors) if self.region_factors is not None else 1
-        return torch.nn.BCELoss(reduction="none")(p * d * f, (x > 0).float()).sum(
+    def get_reconstruction_loss_spatial(self, x, p):
+        return torch.nn.BCELoss(reduction="none")(p, x).sum(
             dim=-1
         )
 
     @staticmethod
-    def _mix_modalities(x_paired, x_expr, x_acc, mask_expr, mask_acc):
+    def _mix_modalities(x_paired, x_expr, x_spat, mask_expr, mask_spat):
         """
         Mixes modality-specific vectors according to the modality masks.
 
-        in positions where both `mask_expr` and `mask_acc` are True (corresponding to cell
-        for which both expression and accessibility data is available), values from `x_paired`
+        in positions where both `mask_expr` and `mask_spat` are True (corresponding to cell
+        for which both expression and spatial data is available), values from `x_paired`
         will be used. If only `mask_expr` is True, use values from `x_expr`, and if only
-        `mask_acc` is True, use values from `x_acc`.
+        `mask_spat` is True, use values from `x_spat`.
 
         Parameters
         ----------
         x_paired
             the values for paired cells (both modalities available), will be used in
-            positions where both `mask_expr` and `mask_acc` are True.
+            positions where both `mask_expr` and `mask_spat` are True.
         x_expr
             the values for expression-only cells, will be used in positions where
             only `mask_expr` is True.
-        x_acc
-            the values for accessibility-only cells, will be used on positions where
-            only `mask_acc` is True.
+        x_spat
+            the values for spatial-only cells, will be used on positions where
+            only `mask_spat` is True.
         mask_expr
             the expression mask, indicating which cells have expression data
-        mask_acc
-            the accessibility mask, indicating which cells have accessibility data
+        mask_spat
+            the spatial mask, indicating which cells have spatial data
         """
-        x = torch.where(mask_expr.T, x_expr.T, x_acc.T).T
-        x = torch.where(torch.logical_and(mask_acc, mask_expr), x_paired.T, x.T).T
+        x = torch.where(mask_expr.T, x_expr.T, x_spat.T).T
+        x = torch.where(torch.logical_and(mask_spat, mask_expr), x_paired.T, x.T).T
         return x
